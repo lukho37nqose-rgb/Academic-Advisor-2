@@ -24,6 +24,8 @@ from app.services.auth import (
 )
 from app.infrastructure.database import get_db_session, init_db, validate_production_database_safety
 from app.infrastructure.repositories import (
+    BackgroundJobConflictError,
+    BackgroundJobRepository,
     DraftRepository,
     DecisionReviewConflictError,
     DecisionReviewRepository,
@@ -1312,6 +1314,25 @@ async def list_handbook_uploads(
             domain_ids=domain_ids,
         )
     }
+
+
+@app.get("/api/v1/admin/background-jobs")
+async def list_background_jobs(
+    status: Literal["QUEUED", "RUNNING", "SUCCEEDED", "DEAD_LETTER"] | None = None,
+    limit: int = Query(default=50, ge=1, le=100),
+    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN])),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Expose identifier-only durable job state to the tenant operator."""
+    try:
+        items = await BackgroundJobRepository(db).list_jobs(
+            tenant_id=user.tenant_id,
+            status=status,
+            limit=limit,
+        )
+    except BackgroundJobConflictError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"items": items}
 
 
 @app.get("/api/v1/governance/handbooks/{handbook_id}/pages")

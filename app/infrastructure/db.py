@@ -137,6 +137,44 @@ class DBHandbookUploadSession(Base):
     completed_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
+
+class DBBackgroundJob(Base):
+    """Tenant-scoped durable work item with a bounded retry lifecycle."""
+    __tablename__ = 'background_jobs'
+    __table_args__ = (
+        UniqueConstraint('tenant_id', 'deduplication_key', name='uq_background_job_deduplication'),
+        CheckConstraint(
+            "job_type IN ('HANDBOOK_TEXT_EXTRACTION', 'HANDBOOK_OCR')",
+            name='ck_background_job_type',
+        ),
+        CheckConstraint(
+            "status IN ('QUEUED', 'RUNNING', 'SUCCEEDED', 'DEAD_LETTER')",
+            name='ck_background_job_status',
+        ),
+        CheckConstraint('attempts >= 0', name='ck_background_job_attempts'),
+        CheckConstraint('max_attempts BETWEEN 1 AND 10', name='ck_background_job_max_attempts'),
+    )
+
+    id = Column(String, primary_key=True)
+    tenant_id = Column(String, ForeignKey('tenants.id'), nullable=False, index=True)
+    domain_id = Column(String, ForeignKey('domains.id'), nullable=False, index=True)
+    job_type = Column(String, nullable=False)
+    resource_id = Column(String, nullable=False)
+    # This is deliberately an identifier-only key: never persist source text or
+    # subject evidence in a queue record.
+    deduplication_key = Column(String, nullable=False)
+    status = Column(String, nullable=False, default='QUEUED', index=True)
+    attempts = Column(Integer, nullable=False, default=0)
+    max_attempts = Column(Integer, nullable=False, default=3)
+    available_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), index=True)
+    lease_expires_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    locked_by = Column(String, nullable=True)
+    last_error = Column(Text, nullable=True)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class DBHandbookPage(Base):
     """Page-level extraction checkpoint; it is never a policy rule by itself."""
     __tablename__ = 'handbook_pages'

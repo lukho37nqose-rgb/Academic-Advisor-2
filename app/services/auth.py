@@ -7,6 +7,7 @@ Integrates with Enterprise Identity Providers (IdP) like Auth0 or Entra ID via J
 
 import os
 from enum import Enum
+from urllib.parse import urlsplit
 from fastapi import Header, HTTPException, status, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field
@@ -16,6 +17,19 @@ from app.services.tenant_context import bind_authenticated_tenant
 
 _DEVELOPMENT_ENVIRONMENTS = {"development", "dev", "local", "test"}
 _JWKS_CLIENTS: dict[str, jwt.PyJWKClient] = {}
+
+
+def validate_production_oidc_configuration() -> None:
+    """Reject an unsafe or incomplete institutional OIDC configuration at startup."""
+    if os.environ.get("IRE_ENV", "development").lower() != "production":
+        return
+    for name in ("JWT_JWKS_URL", "JWT_ISSUER"):
+        value = os.environ.get(name, "").strip()
+        parsed = urlsplit(value)
+        if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password:
+            raise RuntimeError(f"{name} must be a credential-free HTTPS URL in production.")
+    if not os.environ.get("JWT_AUDIENCE", "").strip():
+        raise RuntimeError("JWT_AUDIENCE must be configured in production.")
 
 class Role(str, Enum):
     TENANT_ADMIN = "tenant_admin"
@@ -40,7 +54,7 @@ security = HTTPBearer()
 def _jwt_jwks_client(jwks_url: str) -> jwt.PyJWKClient:
     client = _JWKS_CLIENTS.get(jwks_url)
     if client is None:
-        client = jwt.PyJWKClient(jwks_url, cache_keys=True)
+        client = jwt.PyJWKClient(jwks_url, cache_keys=True, timeout=5)
         _JWKS_CLIENTS[jwks_url] = client
     return client
 
@@ -111,17 +125,29 @@ def get_current_user(auth: HTTPAuthorizationCredentials = Depends(security)) -> 
         role_claim = os.environ.get("IRE_ROLE_CLAIM", "role")
         domain_ids_claim = os.environ.get("IRE_DOMAIN_IDS_CLAIM", "domain_ids")
         subject_claim = os.environ.get("IRE_SUBJECT_ID_CLAIM", "sub")
+        tenant_id = payload.get(tenant_claim)
+        user_id = payload.get("sub")
         domain_ids = payload.get(domain_ids_claim, [])
-        if not isinstance(domain_ids, list) or not all(isinstance(value, str) for value in domain_ids):
+        if not isinstance(tenant_id, str) or not tenant_id.strip():
+            raise ValueError(f"{tenant_claim} must be a non-empty string.")
+        if not isinstance(user_id, str) or not user_id.strip():
+            raise ValueError("sub must be a non-empty string.")
+        if (
+            not isinstance(domain_ids, list)
+            or not all(isinstance(value, str) and value.strip() for value in domain_ids)
+            or len(set(domain_ids)) != len(domain_ids)
+        ):
             raise ValueError(f"{domain_ids_claim} must be a list of strings.")
         role = Role(str(payload[role_claim]))
         subject_claim_value = payload.get(subject_claim)
-        if role == Role.SUBJECT and not isinstance(subject_claim_value, str):
+        if role == Role.SUBJECT and (
+            not isinstance(subject_claim_value, str) or not subject_claim_value.strip()
+        ):
             raise ValueError(f"{subject_claim} must be a string for subject identities.")
         identity = UserIdentity(
-            tenant_id=str(payload[tenant_claim]),
+            tenant_id=tenant_id,
             role=role,
-            user_id=str(payload["sub"]),
+            user_id=user_id,
             subject_id=subject_claim_value if isinstance(subject_claim_value, str) else None,
             domain_ids=domain_ids,
         )

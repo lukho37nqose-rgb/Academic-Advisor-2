@@ -51,11 +51,14 @@ is switched.
 4. Deploy the non-root application image. Check `/health/live` for process
    liveness and `/health/ready` for database readiness. Both return an
    `X-Request-ID` that can join a support report to safe request telemetry.
-5. Run post-deploy checks with institutional test identities: OIDC claim mapping,
+5. Deploy the durable handbook worker separately with an explicit
+   `IRE_WORKER_TENANT_IDS` allowlist. The worker uses the same restricted serving
+   database identity and must not receive a cross-tenant bypass credential.
+6. Run post-deploy checks with institutional test identities: OIDC claim mapping,
    role revocation, tenant/domain isolation, author/approver separation,
    release signature verification, source upload, assistance route, a
    subject-owned decision-review case, and an idempotent retry.
-6. Enable shadow traffic only after the policy, privacy, accessibility, and
+7. Enable shadow traffic only after the policy, privacy, accessibility, and
    operational owners have accepted the pilot entry gates.
 
 ## Configuration and secret operations
@@ -71,9 +74,11 @@ is switched.
   operationally separable without staff handling storage objects.
 - Restrict migration, application, and break-glass database accounts to distinct
   credentials and least-privilege roles.
-- Run handbook/OCR workers with a tenant identifier in the trusted job payload,
-  and run retention work per tenant. Do not use an unscoped worker query against
-  a production RLS database.
+- Run handbook/OCR work through `background_jobs` with an explicit
+  `IRE_WORKER_TENANT_IDS` allowlist, and run retention work per tenant. Do not
+  use an unscoped worker query against a production RLS database. Monitor queue
+  age, lease recovery, retry volume, and `DEAD_LETTER` records; a dead letter
+  requires an operator decision, not silent replay.
 - Set log retention and redaction rules before traffic is accepted. Request
   telemetry must exclude credentials, personal evidence, query strings, and
   free-text assistance messages. The API applies no-store, anti-framing,
@@ -100,10 +105,11 @@ is switched.
 
 ## Explicit non-goals of this baseline
 
-This baseline does not yet implement a durable workflow outbox and managed
-dispatcher, full disaster recovery, centralised security monitoring, or a live
-institutional integration. Workflow rules are deliberately withheld rather than
-simulated; see [WORKFLOW_DISPATCH.md](WORKFLOW_DISPATCH.md). These are visible
-release gates, not hidden behind an enterprise label. PostgreSQL RLS is
-implemented, but must still be rehearsed with the institution's real serving
-and migration roles.
+This baseline includes a durable worker queue for internal handbook source
+processing. It does not implement a durable **external workflow** outbox and
+managed dispatcher, full disaster recovery, centralised security monitoring, or
+a live institutional integration. Workflow rules are deliberately withheld
+rather than simulated; see [WORKFLOW_DISPATCH.md](WORKFLOW_DISPATCH.md). These
+are visible release gates, not hidden behind an enterprise label. PostgreSQL
+RLS is implemented, but must still be rehearsed with the institution's real
+serving and migration roles.

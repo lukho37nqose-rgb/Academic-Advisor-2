@@ -5,8 +5,8 @@ Handbook intake is deliberately a source-verification and review workflow, not a
 ## Lifecycle
 
 ```text
-PDF upload -> SHA-256 verified object -> QUEUED
-         -> external worker -> page checkpoints -> READY_FOR_REVIEW
+PDF upload -> SHA-256 verified object -> durable QUEUED job
+         -> tenant-scoped worker -> page checkpoints -> READY_FOR_REVIEW
                                       -> NEEDS_MANUAL_REVIEW (missing selectable text)
          -> human authors a draft -> separate approval -> signed release
 ```
@@ -23,19 +23,21 @@ The worker reads the staged bytes, computes the authoritative SHA-256 hash, writ
 
 The production bucket must allow CORS only for the institution's application origin, block public access, use bucket versioning and lifecycle cleanup for abandoned `tenants/*/handbook-staging/` objects, and restrict presigned uploads to the application's IAM role. Set `S3_BUCKET_NAME`, `S3_SERVER_SIDE_ENCRYPTION`, `HANDBOOK_DIRECT_UPLOAD_MAX_BYTES` (2 GB by default), and `HANDBOOK_UPLOAD_SESSION_TTL_SECONDS` (15 minutes by default). Without S3, the interface automatically uses the existing bounded API upload path.
 
-The worker is started outside the API process:
+The worker is started outside the API process and claims only the tenants
+explicitly assigned to it:
 
 ```powershell
-python -m app.services.handbook_worker handbook_<id>
+$env:IRE_WORKER_TENANT_IDS = 'tenant_uct_pilot'
+python -m app.services.background_worker
 ```
 
-It retrieves the immutable object, verifies its SHA-256 hash again, processes pages individually, and commits each page as a checkpoint. If it stops, rerunning it for the same handbook continues at the next unprocessed page. The worker marks a source `READY_FOR_REVIEW` only after all page checkpoints have been written and every page contains selectable text. An encrypted or corrupted document is marked `FAILED` with a bounded error message.
+It retrieves the immutable object, verifies its SHA-256 hash again, processes pages individually, and commits each page as a checkpoint. Each queue claim has a renewable lease. A stopped worker's lease expires, then another worker under the same tenant scope can resume at the next unprocessed page. Extraction retries use bounded exponential backoff; after the configured maximum, the identifier-only job remains in `DEAD_LETTER` for an operator decision. The worker marks a source `READY_FOR_REVIEW` only after all page checkpoints have been written and every page contains selectable text. An encrypted or corrupted document is marked `FAILED` with a bounded error message.
 
 Authors, approvers, and auditors can inspect those checkpoints in the Handbook Intake screen. The API returns a bounded page slice rather than an entire source (`GET /api/v1/governance/handbooks/{handbook_id}/pages`), and the interface presents the filename and page number alongside each excerpt so a later rule citation stays tied to its source.
 
 ## Large and scanned documents
 
-The worker spools source bytes to disk after 8 MB rather than retaining the entire handbook in process memory. Object storage remains the source of truth. Production deployments should run this worker from a durable queue with one job per source and metric/alert coverage for `FAILED` and long-running `EXTRACTING` jobs.
+The worker spools source bytes to disk after 8 MB rather than retaining the entire handbook in process memory. Object storage remains the source of truth. Production deployments use the durable queue with one job per source and need metric/alert coverage for `FAILED`, `DEAD_LETTER`, and long-running `EXTRACTING` jobs.
 
 `pypdf` extracts embedded text. It does not perform OCR, table reconstruction, semantic rule extraction, or determine which source passage is authoritative. A scanned handbook may therefore have blank page text even though its source object and page count are valid. Any source with one or more pages lacking selectable text is marked `NEEDS_MANUAL_REVIEW`, never `READY_FOR_REVIEW`; it cannot produce a policy draft or release until an accessible text source or a reviewed OCR result is available. OCR and LLM-assisted rule proposals belong in a later, separately validated worker stage, with each proposal linked to page text and routed through the normal draft/review/release workflow.
 

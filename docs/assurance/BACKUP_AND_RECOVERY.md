@@ -15,3 +15,7 @@ records.
 Do not accept a successful backup job as recovery evidence. Record the operator,
 environment, input backup identifier, elapsed time, result, exceptions, and
 follow-up owner without including personal data or secrets.
+
+Use [OPERATIONAL_EXERCISE_EVIDENCE.md](OPERATIONAL_EXERCISE_EVIDENCE.md) and
+`tools/validate_operational_exercise.py` to validate the redacted exercise
+record before retaining it in the institution's evidence store.

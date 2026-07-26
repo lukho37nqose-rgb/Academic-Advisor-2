@@ -35,6 +35,27 @@ services:
     command: alembic upgrade head
     profiles: ["migration"]
 
+  worker:
+    build: .
+    volumes:
+      - .:/app
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/reasoning_engine
+      - REDIS_URL=redis://redis:6379/0
+      - IRE_ENV=development
+      - IRE_AUTO_CREATE_SCHEMA=false
+      - IRE_WORKER_TENANT_IDS=${IRE_WORKER_TENANT_IDS:-demo_university}
+      - IRE_BACKGROUND_JOB_LEASE_SECONDS=900
+      - IRE_BACKGROUND_JOB_POLL_SECONDS=5
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: python -m app.services.background_worker
+    profiles: ["workers"]
+
   db:
     image: postgres:15-alpine@sha256:3d0f7584ed7d04e27fa050d6683a74746608faf21f202be78460d679cc56461f
     environment:

@@ -18,7 +18,9 @@ REDIS_URL=rediss://...
 PUBLIC_RATE_LIMIT_SALT=<long random secret>
 ```
 
-Production startup fails closed if the OIDC values, Redis, or the public rate-limit salt are absent. HS256 development tokens are refused in production.
+Production startup fails closed if the OIDC values, encrypted `rediss://` Redis,
+or the public rate-limit salt are absent. JWKS and issuer URLs must be
+credential-free HTTPS URLs. HS256 development tokens are refused in production.
 
 ## Claim contract
 
@@ -32,7 +34,11 @@ Every IRE token must contain:
 | `domain_ids` | Assigned decision domains | `["dom_support_2026"]` |
 | `student_number` | Subject record binding where the role is `subject` | `S1234567` |
 
-The claim names are configurable. The subject claim must be stable, non-reassigned, and match the subject identifier used by the institution's system of record. A `subject` token can only submit evidence, evaluate, or retrieve traces for that exact subject identifier.
+The claim names are configurable. Tenant and `sub` values must be non-empty;
+domain assignments must be non-empty strings without duplicates. The subject
+claim must be stable, non-reassigned, and match the subject identifier used by
+the institution's system of record. A `subject` token can only submit evidence,
+evaluate, or retrieve traces for that exact subject identifier.
 
 ## Rollout checklist
 

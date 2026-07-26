@@ -108,3 +108,25 @@ def test_only_governance_roles_can_read_configured_metadata_surface(role: Role) 
         app.dependency_overrides.clear()
 
     assert response.status_code == 403
+
+
+@pytest.mark.parametrize(
+    "role",
+    [
+        Role.SUBJECT,
+        Role.METADATA_STEWARD,
+        Role.ASSISTANCE_COORDINATOR,
+        Role.RULE_AUTHOR,
+        Role.RULE_APPROVER,
+        Role.POLICY_OWNER,
+        Role.AUDITOR,
+    ],
+)
+def test_only_tenant_administrators_can_inspect_durable_job_state(role: Role) -> None:
+    app.dependency_overrides[get_current_user] = lambda: _identity(role)
+    try:
+        response = TestClient(app).get("/api/v1/admin/background-jobs")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 403

@@ -14,7 +14,7 @@ not the enforcement boundary.
 | Release approver | Inspect sources; independently review mappings; approve a different author's eligible policy release. | Source alteration, draft authoring through staff UI, own-release approval, and evidence changes. |
 | Policy owner | Record and resolve a documented policy interpretation in an assigned domain. | Releases, evidence, source editing, mappings, and resolving their own ambiguity. |
 | Auditor | Read-only governance, source, mapping, assistance, policy, and trace inspection in assigned domains. | Every write route. |
-| Tenant administrator | Monitored break-glass administration across tenant domains. | Bypassing immutable release/mapping transitions or separation-of-duties checks. |
+| Tenant administrator | Monitored break-glass administration across tenant domains; identifier-only durable-job status. | Bypassing immutable release/mapping transitions or separation-of-duties checks; automatic dead-letter replay. |
 
 ## Required checks per protected operation
 

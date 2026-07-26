@@ -70,6 +70,14 @@ def test_production_readiness_rejects_wildcard_cors(monkeypatch: pytest.MonkeyPa
         validate_production_readiness()
 
 
+def test_production_readiness_rejects_unencrypted_redis(monkeypatch: pytest.MonkeyPatch, signing_key: str):
+    _set_valid_production_configuration(monkeypatch, signing_key)
+    monkeypatch.setenv("REDIS_URL", "redis://cache.example.test:6379/0")
+
+    with pytest.raises(RuntimeError, match="rediss"):
+        validate_production_readiness()
+
+
 def test_production_readiness_accepts_complete_configuration(monkeypatch: pytest.MonkeyPatch, signing_key: str):
     _set_valid_production_configuration(monkeypatch, signing_key)
 

@@ -8,12 +8,20 @@ import app.api as api_module
 from fastapi.testclient import TestClient
 from pypdf import PdfWriter
 from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.api import app
 from app.infrastructure.database import get_db_session
 from app.infrastructure.blob_storage import BlobStorage
-from app.infrastructure.db import Base, DBHandbookOcrReviewEvent, DBHandbookPage, DBHandbookUpload, DBHandbookUploadSession
+from app.infrastructure.db import (
+    Base,
+    DBBackgroundJob,
+    DBHandbookOcrReviewEvent,
+    DBHandbookPage,
+    DBHandbookUpload,
+    DBHandbookUploadSession,
+)
 from app.services.auth import Role, UserIdentity, get_current_user
 from app.services import handbook_ocr_worker, handbook_worker
 from app.services.ocr_provider import OCRPageCandidate
@@ -84,9 +92,12 @@ def test_handbook_upload_is_queued_and_extracted_page_by_page(tmp_path, monkeypa
             async with session_factory() as session:
                 upload = await session.get(DBHandbookUpload, payload["handbook_id"])
                 page = await session.get(DBHandbookPage, f"handbook_page_{payload['handbook_id']}_1")
-                return upload, page
+                job = (await session.execute(
+                    select(DBBackgroundJob).where(DBBackgroundJob.resource_id == payload["handbook_id"])
+                )).scalars().one()
+                return upload, page, job
 
-        upload, page = asyncio.run(_load_upload())
+        upload, page, job = asyncio.run(_load_upload())
         page_review = client.get(f"/api/v1/governance/handbooks/{payload['handbook_id']}/pages")
     finally:
         app.dependency_overrides.clear()
@@ -94,6 +105,8 @@ def test_handbook_upload_is_queued_and_extracted_page_by_page(tmp_path, monkeypa
 
     assert response.status_code == 201
     assert payload["status"] == "QUEUED"
+    assert job.status == "QUEUED"
+    assert job.job_type == "HANDBOOK_TEXT_EXTRACTION"
     assert len(payload["content_hash"]) == 64
     assert "cannot publish a policy" in payload["next_step"]
     assert upload is not None

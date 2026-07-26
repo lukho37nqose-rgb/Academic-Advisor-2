@@ -21,6 +21,8 @@ institutional pilot.
 | [INCIDENT_RESPONSE.md](INCIDENT_RESPONSE.md) | Minimum operational response procedure. |
 | [BACKUP_AND_RECOVERY.md](BACKUP_AND_RECOVERY.md) | Rehearsal evidence and recovery gates. |
 | [PILOT_BOUNDARY.md](PILOT_BOUNDARY.md) | What a controlled pilot may and may not do. |
+| [OPERATIONAL_EXERCISE_EVIDENCE.md](OPERATIONAL_EXERCISE_EVIDENCE.md) | Redacted, machine-validated evidence records for institution-operated drills. |
+| [../DURABLE_BACKGROUND_WORKER.md](../DURABLE_BACKGROUND_WORKER.md) | Tenant-scoped handbook queue, lease, retry, and dead-letter boundary. |
 
 The test files named by the control register run in protected CI. Test output,
 the pinned dependency inventory, container build, and PostgreSQL RLS rehearsal

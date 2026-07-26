@@ -5,7 +5,13 @@ import pytest
 from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
 
-from app.services.auth import Role, UserIdentity, ensure_subject_access, get_current_user
+from app.services.auth import (
+    Role,
+    UserIdentity,
+    ensure_subject_access,
+    get_current_user,
+    validate_production_oidc_configuration,
+)
 
 
 def _credentials(token: str) -> HTTPAuthorizationCredentials:
@@ -112,3 +118,43 @@ def test_invalid_domain_assignment_claim_is_rejected(monkeypatch):
         get_current_user(_credentials(token))
 
     assert error.value.status_code == 401
+
+
+@pytest.mark.parametrize(
+    ("claim", "value"),
+    [
+        ("tenant_id", ""),
+        ("sub", ""),
+        ("domain_ids", ["dom_1", "dom_1"]),
+        ("domain_ids", [" "]),
+    ],
+)
+def test_identity_claims_cannot_be_blank_or_ambiguous(monkeypatch, claim, value):
+    secret = "development-secret-that-is-long-enough-for-hs256"
+    monkeypatch.setenv("IRE_ENV", "development")
+    monkeypatch.setenv("JWT_SECRET_KEY", secret)
+    monkeypatch.delenv("JWT_JWKS_URL", raising=False)
+    payload = {
+        "sub": "user_1",
+        "tenant_id": "tenant_1",
+        "role": "auditor",
+        "domain_ids": ["dom_1"],
+        "exp": int(time.time()) + 300,
+    }
+    payload[claim] = value
+    token = jwt.encode(payload, secret, algorithm="HS256")
+
+    with pytest.raises(HTTPException) as error:
+        get_current_user(_credentials(token))
+
+    assert error.value.status_code == 401
+
+
+def test_production_oidc_configuration_requires_https_endpoints(monkeypatch):
+    monkeypatch.setenv("IRE_ENV", "production")
+    monkeypatch.setenv("JWT_JWKS_URL", "http://identity.example.test/jwks")
+    monkeypatch.setenv("JWT_ISSUER", "https://identity.example.test/")
+    monkeypatch.setenv("JWT_AUDIENCE", "institutional-reasoning-engine")
+
+    with pytest.raises(RuntimeError, match="JWT_JWKS_URL"):
+        validate_production_oidc_configuration()

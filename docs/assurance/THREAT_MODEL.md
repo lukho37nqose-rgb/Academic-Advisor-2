@@ -12,7 +12,7 @@ that can be tested without an institution's data.
 | Self-approved rule or mapping | Author/reviewer separation and immutable status transitions. | Institutional assignment process and break-glass review required. |
 | Policy or graph alteration | Canonical signed release bundle and production evaluation-time verification. | Handbook source manifest is not yet bound into the signed release. |
 | Hostile or altered PDF | File/type/size checks, private content-addressed storage, worker hash verification, review-only OCR. | Malware scanning and real document-quality measurement are not delivered. |
-| Worker interruption | Page checkpoints and restart from last persisted page. | No durable dispatcher, retry policy, or dead-letter queue yet. |
+| Worker interruption | Tenant-scoped durable queue, renewable leases, bounded retry, dead-letter retention, and page checkpoints. | Monitoring, operator ownership, and external workflow delivery controls remain institution-dependent. |
 | Sensitive logging | Header/body-safe middleware and telemetry redaction. | Central immutable audit store and alert triage are deployment controls. |
 | Browser misuse or URL guessing | Capability-gated UI plus API role/domain/ownership checks. | Institution must configure the actual SSO frontend and session lifecycle. |
 

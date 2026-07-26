@@ -33,7 +33,8 @@ The repository demonstrates:
 - a role-scoped staff inbox with append-only assistance status history, response targets, and retention expiry;
 - subject-owned decision-review cases tied to immutable traces, with constrained staff resolution and append-only history;
 - subject-to-identity ownership enforcement for evidence, evaluations, and traces;
-- handbook PDF source verification with resumable page-level worker checkpoints;
+- handbook PDF source verification with a tenant-scoped durable worker queue,
+  resumable page-level checkpoints, bounded retries, and dead-letter retention;
 - reviewed OCR proposals that cannot enter a release without a human decision;
 - a fixture-backed synthetic pilot rehearsal pack with canonical decision-trace
   digests, including approval, fail-closed, and manual-review paths;

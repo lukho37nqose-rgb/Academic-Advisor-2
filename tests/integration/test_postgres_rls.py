@@ -323,6 +323,21 @@ async def _seed_two_tenants(app_url: str) -> None:
                 )
                 await connection.execute(
                     text("""
+                        INSERT INTO background_jobs
+                        (id, tenant_id, domain_id, job_type, resource_id, deduplication_key)
+                        VALUES
+                        (:id, :tenant_id, :domain_id, 'HANDBOOK_TEXT_EXTRACTION', :resource_id, :deduplication_key)
+                    """),
+                    {
+                        "id": f"job_{tenant_id}",
+                        "tenant_id": tenant_id,
+                        "domain_id": domain_id,
+                        "resource_id": f"handbook_{tenant_id}",
+                        "deduplication_key": f"HANDBOOK_TEXT_EXTRACTION:handbook_{tenant_id}",
+                    },
+                )
+                await connection.execute(
+                    text("""
                         INSERT INTO releases (id, domain_id, version, rule_graph_id, digital_signature)
                         VALUES (:id, :domain_id, '2026.1', :graph_id, 'rehearsal-signature')
                     """),
@@ -407,8 +422,12 @@ def test_serving_session_cannot_read_update_or_insert_across_tenants(
                     visible_mapping_events = (await session.execute(
                         text("SELECT id FROM system_record_import_mapping_events ORDER BY id")
                     )).scalars().all()
+                    visible_jobs = (await session.execute(
+                        text("SELECT id FROM background_jobs ORDER BY id")
+                    )).scalars().all()
                     assert visible_mappings == ["mapping_tenant_uct"]
                     assert visible_mapping_events == ["mapping_event_tenant_uct"]
+                    assert visible_jobs == ["job_tenant_uct"]
                     await session.execute(text("""
                         UPDATE policy_drafts
                         SET policy_name = 'cross-tenant mutation'
@@ -441,6 +460,15 @@ def test_serving_session_cannot_read_update_or_insert_across_tenants(
                     assert policy_name == "Eligibility policy"
 
             with tenant_scope("tenant_uct"):
+                async with session_factory() as session:
+                    with pytest.raises(DBAPIError):
+                        await session.execute(text("""
+                            INSERT INTO background_jobs
+                            (id, tenant_id, domain_id, job_type, resource_id, deduplication_key)
+                            VALUES
+                            ('job_illegal', 'tenant_other', 'dom_private', 'HANDBOOK_TEXT_EXTRACTION',
+                             'handbook_illegal', 'HANDBOOK_TEXT_EXTRACTION:handbook_illegal')
+                        """))
                 async with session_factory() as session:
                     with pytest.raises(DBAPIError):
                         await session.execute(text("""

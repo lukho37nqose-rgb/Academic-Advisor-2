@@ -3,10 +3,12 @@
 import hashlib
 import os
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlsplit
 
 from fastapi import HTTPException, Request, status
 
 from app.infrastructure.idempotency import redis_client
+from app.services.auth import validate_production_oidc_configuration
 
 
 def _positive_int(name: str, default: int, maximum: int) -> int:
@@ -91,10 +93,13 @@ def validate_production_access_configuration() -> None:
     """Fails closed when production lacks the services that protect public access."""
     if os.environ.get("IRE_ENV", "development").lower() != "production":
         return
+    validate_production_oidc_configuration()
     required = ["JWT_JWKS_URL", "JWT_ISSUER", "JWT_AUDIENCE", "REDIS_URL", "PUBLIC_RATE_LIMIT_SALT"]
     missing = [name for name in required if not os.environ.get(name)]
     if missing:
         raise RuntimeError(f"Production access controls require: {', '.join(missing)}.")
+    if urlsplit(os.environ["REDIS_URL"]).scheme != "rediss":
+        raise RuntimeError("Production REDIS_URL must use rediss:// for encrypted transport.")
     rate_limit_salt = os.environ["PUBLIC_RATE_LIMIT_SALT"]
     if len(rate_limit_salt) < 16 or rate_limit_salt.startswith("change-me"):
         raise RuntimeError("PUBLIC_RATE_LIMIT_SALT must be a non-placeholder secret of at least 16 characters.")

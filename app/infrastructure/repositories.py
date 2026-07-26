@@ -19,6 +19,7 @@ from sqlalchemy.exc import IntegrityError
 from app.core.models import Claim, Evidence, Fact, GraphEdge, GraphNode, ReasoningGraph, Release, RuleGraph
 from app.infrastructure.db import (
     DBClaim,
+    DBBackgroundJob,
     DBFact,
     DBHandbookPage,
     DBHandbookOcrReview,
@@ -133,6 +134,10 @@ class DecisionReviewConflictError(ValueError):
 
 class HandbookUploadConflictError(ValueError):
     """Raised when a handbook job cannot be transitioned safely."""
+
+
+class BackgroundJobConflictError(ValueError):
+    """Raised when a durable worker attempts an invalid job transition."""
 
 
 class SystemRecordImportMappingConflictError(ValueError):
@@ -599,6 +604,238 @@ class SystemRecordImportMappingRepository:
         return self._payload(record)
 
 
+class BackgroundJobRepository:
+    """Durable, tenant-scoped queue records for non-decision processing.
+
+    Jobs carry identifiers only. Source documents, evidence, and policy payloads
+    remain in their purpose-specific stores and are retrieved under the job's
+    tenant scope by the worker.
+    """
+
+    _SUPPORTED_TYPES = frozenset({"HANDBOOK_TEXT_EXTRACTION", "HANDBOOK_OCR"})
+
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    @staticmethod
+    def _summary(job: DBBackgroundJob) -> dict[str, Any]:
+        return {
+            "job_id": cast(str, job.id),
+            "tenant_id": cast(str, job.tenant_id),
+            "domain_id": cast(str, job.domain_id),
+            "job_type": cast(str, job.job_type),
+            "resource_id": cast(str, job.resource_id),
+            "status": cast(str, job.status),
+            "attempts": cast(int, job.attempts),
+            "max_attempts": cast(int, job.max_attempts),
+            "available_at": job.available_at.isoformat() if job.available_at else None,
+            "lease_expires_at": job.lease_expires_at.isoformat() if job.lease_expires_at else None,
+            "locked_by": cast(Optional[str], job.locked_by),
+            "last_error": cast(Optional[str], job.last_error),
+            "completed_at": job.completed_at.isoformat() if job.completed_at else None,
+        }
+
+    async def enqueue(
+        self,
+        *,
+        tenant_id: str,
+        domain_id: str,
+        job_type: str,
+        resource_id: str,
+        max_attempts: int = 3,
+        deduplication_key: str | None = None,
+    ) -> dict[str, Any]:
+        if job_type not in self._SUPPORTED_TYPES:
+            raise BackgroundJobConflictError("Unsupported durable job type.")
+        if not resource_id:
+            raise BackgroundJobConflictError("Durable job resource identifier cannot be blank.")
+        if not 1 <= max_attempts <= 10:
+            raise BackgroundJobConflictError("Durable job max_attempts must be between 1 and 10.")
+
+        deduplication_key = deduplication_key or f"{job_type}:{resource_id}"
+        existing_result = await self.session.execute(
+            select(DBBackgroundJob)
+            .where(
+                DBBackgroundJob.tenant_id == tenant_id,
+                DBBackgroundJob.deduplication_key == deduplication_key,
+            )
+            .with_for_update()
+        )
+        existing = existing_result.scalars().first()
+        if existing is not None:
+            return self._summary(existing)
+
+        job = DBBackgroundJob(
+            id=f"job_{uuid.uuid4().hex}",
+            tenant_id=tenant_id,
+            domain_id=domain_id,
+            job_type=job_type,
+            resource_id=resource_id,
+            deduplication_key=deduplication_key,
+            status="QUEUED",
+            attempts=0,
+            max_attempts=max_attempts,
+            available_at=datetime.now(timezone.utc),
+        )
+        self.session.add(job)
+        try:
+            await self.session.commit()
+        except IntegrityError as exc:
+            await self.session.rollback()
+            existing_result = await self.session.execute(
+                select(DBBackgroundJob).where(
+                    DBBackgroundJob.tenant_id == tenant_id,
+                    DBBackgroundJob.deduplication_key == deduplication_key,
+                )
+            )
+            existing = existing_result.scalars().first()
+            if existing is not None:
+                return self._summary(existing)
+            raise BackgroundJobConflictError("The durable job could not be queued.") from exc
+        return self._summary(job)
+
+    async def claim_next(
+        self,
+        *,
+        tenant_id: str,
+        worker_id: str,
+        lease_seconds: int,
+    ) -> Optional[DBBackgroundJob]:
+        if not worker_id:
+            raise BackgroundJobConflictError("Durable workers require a non-empty worker identifier.")
+        if not 30 <= lease_seconds <= 86_400:
+            raise BackgroundJobConflictError("Durable job lease_seconds must be between 30 and 86400.")
+
+        while True:
+            now = datetime.now(timezone.utc)
+            result = await self.session.execute(
+                select(DBBackgroundJob)
+                .where(
+                    DBBackgroundJob.tenant_id == tenant_id,
+                    (
+                        ((DBBackgroundJob.status == "QUEUED") & (DBBackgroundJob.available_at <= now))
+                        | ((DBBackgroundJob.status == "RUNNING") & (DBBackgroundJob.lease_expires_at <= now))
+                    ),
+                )
+                .order_by(DBBackgroundJob.available_at, DBBackgroundJob.created_at, DBBackgroundJob.id)
+                .limit(1)
+                .with_for_update(skip_locked=True)
+            )
+            job = result.scalars().first()
+            if job is None:
+                return None
+            if cast(int, job.attempts) >= cast(int, job.max_attempts):
+                setattr(job, "status", "DEAD_LETTER")
+                setattr(job, "lease_expires_at", None)
+                setattr(job, "locked_by", None)
+                setattr(job, "completed_at", now)
+                setattr(job, "last_error", "Worker lease expired after the maximum permitted attempts.")
+                await self.session.commit()
+                continue
+
+            setattr(job, "status", "RUNNING")
+            setattr(job, "attempts", cast(int, job.attempts) + 1)
+            setattr(job, "locked_by", worker_id)
+            setattr(job, "lease_expires_at", now + timedelta(seconds=lease_seconds))
+            setattr(job, "last_error", None)
+            await self.session.commit()
+            await self.session.refresh(job)
+            return job
+
+    async def renew_lease(
+        self,
+        *,
+        job_id: str,
+        tenant_id: str,
+        worker_id: str,
+        lease_seconds: int,
+    ) -> bool:
+        job = await self.session.get(DBBackgroundJob, job_id, with_for_update=True)
+        if (
+            job is None
+            or job.tenant_id != tenant_id
+            or job.status != "RUNNING"
+            or job.locked_by != worker_id
+        ):
+            return False
+        setattr(job, "lease_expires_at", datetime.now(timezone.utc) + timedelta(seconds=lease_seconds))
+        await self.session.commit()
+        return True
+
+    async def mark_succeeded(self, *, job_id: str, tenant_id: str, worker_id: str) -> None:
+        job = await self.session.get(DBBackgroundJob, job_id, with_for_update=True)
+        if (
+            job is None
+            or job.tenant_id != tenant_id
+            or job.status != "RUNNING"
+            or job.locked_by != worker_id
+        ):
+            raise BackgroundJobConflictError("Durable job completion requires the active worker lease.")
+        now = datetime.now(timezone.utc)
+        setattr(job, "status", "SUCCEEDED")
+        setattr(job, "lease_expires_at", None)
+        setattr(job, "locked_by", None)
+        setattr(job, "completed_at", now)
+        setattr(job, "last_error", None)
+        await self.session.commit()
+
+    async def mark_failed(
+        self,
+        *,
+        job_id: str,
+        tenant_id: str,
+        worker_id: str,
+        error_message: str,
+        retry_delay_seconds: int | None = None,
+    ) -> str:
+        job = await self.session.get(DBBackgroundJob, job_id, with_for_update=True)
+        if (
+            job is None
+            or job.tenant_id != tenant_id
+            or job.status != "RUNNING"
+            or job.locked_by != worker_id
+        ):
+            raise BackgroundJobConflictError("Durable job failure requires the active worker lease.")
+
+        now = datetime.now(timezone.utc)
+        message = error_message.strip()[:1000] or "Worker execution failed without a safe diagnostic message."
+        setattr(job, "lease_expires_at", None)
+        setattr(job, "locked_by", None)
+        setattr(job, "last_error", message)
+        if cast(int, job.attempts) >= cast(int, job.max_attempts):
+            setattr(job, "status", "DEAD_LETTER")
+            setattr(job, "completed_at", now)
+            await self.session.commit()
+            return "DEAD_LETTER"
+
+        delay = retry_delay_seconds
+        if delay is None:
+            delay = min(60 * (2 ** max(cast(int, job.attempts) - 1, 0)), 3600)
+        if delay < 0 or delay > 86_400:
+            raise BackgroundJobConflictError("Durable job retry delay must be between 0 and 86400 seconds.")
+        setattr(job, "status", "QUEUED")
+        setattr(job, "available_at", now + timedelta(seconds=delay))
+        await self.session.commit()
+        return "QUEUED"
+
+    async def list_jobs(
+        self,
+        *,
+        tenant_id: str,
+        status: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        if status is not None and status not in {"QUEUED", "RUNNING", "SUCCEEDED", "DEAD_LETTER"}:
+            raise BackgroundJobConflictError("Unsupported durable job status filter.")
+        query = select(DBBackgroundJob).where(DBBackgroundJob.tenant_id == tenant_id)
+        if status is not None:
+            query = query.where(DBBackgroundJob.status == status)
+        result = await self.session.execute(
+            query.order_by(DBBackgroundJob.created_at.desc(), DBBackgroundJob.id).limit(limit)
+        )
+        return [self._summary(job) for job in result.scalars().all()]
+
+
 class HandbookRepository:
     """Persistent job and page checkpoints for large handbook extraction."""
 
@@ -648,8 +885,13 @@ class HandbookRepository:
         )
         self.session.add(upload)
         try:
-            await self.session.commit()
-        except IntegrityError as exc:
+            await BackgroundJobRepository(self.session).enqueue(
+                tenant_id=tenant_id,
+                domain_id=domain_id,
+                job_type="HANDBOOK_TEXT_EXTRACTION",
+                resource_id=handbook_id,
+            )
+        except (IntegrityError, BackgroundJobConflictError) as exc:
             await self.session.rollback()
             raise HandbookUploadConflictError("The handbook upload could not be recorded.") from exc
         return self._summary(upload)
@@ -748,8 +990,13 @@ class HandbookRepository:
         setattr(upload_session, "status", "COMPLETED")
         setattr(upload_session, "completed_at", datetime.now(timezone.utc))
         try:
-            await self.session.commit()
-        except IntegrityError as exc:
+            await BackgroundJobRepository(self.session).enqueue(
+                tenant_id=cast(str, upload_session.tenant_id),
+                domain_id=cast(str, upload_session.domain_id),
+                job_type="HANDBOOK_TEXT_EXTRACTION",
+                resource_id=handbook_id,
+            )
+        except (IntegrityError, BackgroundJobConflictError) as exc:
             await self.session.rollback()
             raise HandbookUploadConflictError("The completed handbook upload could not be queued.") from exc
         return self._summary(handbook)
@@ -829,14 +1076,33 @@ class HandbookRepository:
         }
 
     async def queue_ocr(self, handbook_id: str, *, tenant_id: str) -> DBHandbookUpload:
-        upload = await self.get_upload(handbook_id, tenant_id=tenant_id)
+        result = await self.session.execute(
+            select(DBHandbookUpload)
+            .where(
+                DBHandbookUpload.id == handbook_id,
+                DBHandbookUpload.tenant_id == tenant_id,
+            )
+            .with_for_update()
+        )
+        upload = result.scalars().first()
         if upload is None:
             raise HandbookUploadConflictError("Handbook source was not found.")
         if upload.status != "NEEDS_MANUAL_REVIEW":
             raise HandbookUploadConflictError("Only handbook sources awaiting manual review can be sent for OCR.")
         setattr(upload, "status", "OCR_QUEUED")
         setattr(upload, "error_message", None)
-        await self.session.commit()
+        try:
+            await BackgroundJobRepository(self.session).enqueue(
+                tenant_id=tenant_id,
+                domain_id=cast(str, upload.domain_id),
+                job_type="HANDBOOK_OCR",
+                resource_id=handbook_id,
+                max_attempts=1,
+                deduplication_key=f"HANDBOOK_OCR:{handbook_id}:{uuid.uuid4().hex}",
+            )
+        except (IntegrityError, BackgroundJobConflictError) as exc:
+            await self.session.rollback()
+            raise HandbookUploadConflictError("The handbook OCR request could not be queued.") from exc
         await self.session.refresh(upload)
         return upload
 
@@ -1004,7 +1270,9 @@ class HandbookRepository:
             select(DBHandbookUpload).where(DBHandbookUpload.id == handbook_id).with_for_update()
         )
         upload = result.scalars().first()
-        if upload is None or upload.status not in {"QUEUED", "EXTRACTING"}:
+        # A failed extraction may be reclaimed only by its durable retry job;
+        # page checkpoints make the retried work idempotent.
+        if upload is None or upload.status not in {"QUEUED", "EXTRACTING", "FAILED"}:
             return None
         setattr(upload, "status", "EXTRACTING")
         setattr(upload, "error_message", None)

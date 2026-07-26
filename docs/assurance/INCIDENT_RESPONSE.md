@@ -18,3 +18,8 @@ procedure makes the technical boundary explicit:
 Pilot entry requires named contacts, severity definitions, after-hours routing,
 notification obligations, and a rehearsal. This document is not a substitute
 for those institutional procedures.
+
+Record the redacted incident exercise using
+[OPERATIONAL_EXERCISE_EVIDENCE.md](OPERATIONAL_EXERCISE_EVIDENCE.md). A
+`DEAD_LETTER` handbook job is contained work, not an incident closure: an
+operator must investigate and make the next action explicit.
