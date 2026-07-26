@@ -87,8 +87,8 @@ is switched.
   requests, authorisation denials, and release failures.
 - Require the protected CI checks to pass before a deployment. They use
   read-only repository permissions, immutable action references, bounded job
-  times, production dependency audit, schema migration verification, and a
-  PostgreSQL RLS rehearsal.
+  times, production dependency audit, schema migration verification, a locked
+  non-root container build, and a PostgreSQL RLS rehearsal.
 - Rehearse an identity-revocation event, signing-key rotation, source-policy
   rollback, bad release rejection, backup restoration, and privacy/security
   incident escalation.
@@ -100,8 +100,10 @@ is switched.
 
 ## Explicit non-goals of this baseline
 
-This baseline does not yet implement a managed job queue, full disaster
-recovery, centralised security monitoring, or a live institutional integration.
-Those are deliberately visible release gates, not hidden behind an enterprise
-label. PostgreSQL RLS is implemented, but must still be rehearsed with the
-institution's real serving and migration roles.
+This baseline does not yet implement a durable workflow outbox and managed
+dispatcher, full disaster recovery, centralised security monitoring, or a live
+institutional integration. Workflow rules are deliberately withheld rather than
+simulated; see [WORKFLOW_DISPATCH.md](WORKFLOW_DISPATCH.md). These are visible
+release gates, not hidden behind an enterprise label. PostgreSQL RLS is
+implemented, but must still be rehearsed with the institution's real serving
+and migration roles.

@@ -43,6 +43,19 @@ to 365 days and is checked by `python -m app.services.retention`. The pilot
 institution must set its own approved retention period before processing real
 records.
 
+## Subject review surface
+
+The reference frontend exposes a separate trace-bound subject surface at
+`/?experience=subject&trace={reasoning_graph_id}`. The API, not this route,
+enforces that the authenticated subject owns the trace. The surface records a
+category, an explanation, and optionally the displayed facts that need checking;
+it does not expose raw evidence identifiers or allow the original trace to be
+edited.
+
+An institutional portal should link to this surface from an authenticated list
+of that person's decisions. The route is a reference integration boundary, not
+an assertion that a URL alone constitutes subject authentication.
+
 ## UCT pilot use
 
 For the UCT case study, this workflow must remain in shadow mode until UCT has

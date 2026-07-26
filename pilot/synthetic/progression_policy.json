@@ -1,0 +1,33 @@
+{
+  "root": {
+    "children": [
+      {
+        "condition": "==",
+        "id": "rule_active_record",
+        "label": "Active registration record",
+        "source_citation": "Synthetic progression policy, clause 1",
+        "target": "registration.is_active",
+        "value": true
+      },
+      {
+        "condition": ">=",
+        "id": "rule_completed_credits",
+        "label": "Minimum completed credits",
+        "source_citation": "Synthetic progression policy, clause 2",
+        "target": "academic.completed_credits",
+        "value": 96
+      },
+      {
+        "condition": "==",
+        "id": "rule_no_block",
+        "label": "No unresolved administrative block",
+        "source_citation": "Synthetic progression policy, clause 3",
+        "target": "account.has_administrative_block",
+        "value": false
+      }
+    ],
+    "id": "root_synthetic_progression",
+    "label": "Synthetic progression decision",
+    "operator": "AND"
+  }
+}

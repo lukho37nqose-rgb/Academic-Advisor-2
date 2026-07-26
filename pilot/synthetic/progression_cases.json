@@ -1,0 +1,122 @@
+{
+  "cases": [
+    {
+      "description": "All verified evidence meets the published synthetic requirements.",
+      "expected_decision": "ELIGIBLE",
+      "facts": [
+        {
+          "final_confidence": 1.0,
+          "id": "fact_eligible_active",
+          "resolved_value": true,
+          "supporting_claims": ["claim_eligible_active"],
+          "target_path": "registration.is_active"
+        },
+        {
+          "final_confidence": 1.0,
+          "id": "fact_eligible_credits",
+          "resolved_value": 120,
+          "supporting_claims": ["claim_eligible_credits"],
+          "target_path": "academic.completed_credits"
+        },
+        {
+          "final_confidence": 1.0,
+          "id": "fact_eligible_no_block",
+          "resolved_value": false,
+          "supporting_claims": ["claim_eligible_no_block"],
+          "target_path": "account.has_administrative_block"
+        }
+      ],
+      "id": "eligible_verified_record",
+      "subject_reference": "synthetic-subject-eligible"
+    },
+    {
+      "description": "Verified credits are below the stated threshold.",
+      "expected_decision": "INELIGIBLE",
+      "facts": [
+        {
+          "final_confidence": 1.0,
+          "id": "fact_below_threshold_active",
+          "resolved_value": true,
+          "supporting_claims": ["claim_below_threshold_active"],
+          "target_path": "registration.is_active"
+        },
+        {
+          "final_confidence": 1.0,
+          "id": "fact_below_threshold_credits",
+          "resolved_value": 84,
+          "supporting_claims": ["claim_below_threshold_credits"],
+          "target_path": "academic.completed_credits"
+        },
+        {
+          "final_confidence": 1.0,
+          "id": "fact_below_threshold_no_block",
+          "resolved_value": false,
+          "supporting_claims": ["claim_below_threshold_no_block"],
+          "target_path": "account.has_administrative_block"
+        }
+      ],
+      "id": "ineligible_below_credit_threshold",
+      "subject_reference": "synthetic-subject-below-threshold"
+    },
+    {
+      "description": "Missing credits must fail closed rather than be inferred.",
+      "expected_decision": "INELIGIBLE",
+      "facts": [
+        {
+          "final_confidence": 1.0,
+          "id": "fact_missing_credit_active",
+          "resolved_value": true,
+          "supporting_claims": ["claim_missing_credit_active"],
+          "target_path": "registration.is_active"
+        },
+        {
+          "final_confidence": 1.0,
+          "id": "fact_missing_credit_no_block",
+          "resolved_value": false,
+          "supporting_claims": ["claim_missing_credit_no_block"],
+          "target_path": "account.has_administrative_block"
+        }
+      ],
+      "id": "ineligible_missing_credits",
+      "subject_reference": "synthetic-subject-missing-evidence"
+    },
+    {
+      "description": "Ambiguous evidence is routed to human review, not a final outcome.",
+      "expected_decision": "NEEDS_MANUAL_REVIEW",
+      "facts": [
+        {
+          "final_confidence": 1.0,
+          "id": "fact_ambiguous_active",
+          "resolved_value": true,
+          "supporting_claims": ["claim_ambiguous_active"],
+          "target_path": "registration.is_active"
+        },
+        {
+          "final_confidence": 0.5,
+          "id": "fact_ambiguous_credits",
+          "resolved_value": 96,
+          "status": "needs_human_review",
+          "supporting_claims": ["claim_ambiguous_credits"],
+          "target_path": "academic.completed_credits"
+        },
+        {
+          "final_confidence": 1.0,
+          "id": "fact_ambiguous_no_block",
+          "resolved_value": false,
+          "supporting_claims": ["claim_ambiguous_no_block"],
+          "target_path": "account.has_administrative_block"
+        }
+      ],
+      "id": "manual_review_ambiguous_credits",
+      "subject_reference": "synthetic-subject-ambiguous-evidence"
+    }
+  ],
+  "description": "Fictional, non-institutional progression cases that exercise deterministic evaluation safeguards.",
+  "domain_id": "synthetic_progression",
+  "evaluation_timestamp": "2026-01-15T09:00:00+00:00",
+  "policy_as_of_date": "2026-01-01",
+  "release_id": "rel_synthetic_progression_2026_1",
+  "release_version": "2026.1",
+  "suite_id": "synthetic-progression-rehearsal",
+  "tenant_id": "synthetic_institution"
+}

@@ -10,6 +10,20 @@ The next phase is not a broader demo. It is a bounded test of whether the IRE
 can represent one real institutional decision faithfully and explain it to the
 people affected by it.
 
+## Pre-Authorisation Rehearsal
+
+The repository now includes a fully synthetic rehearsal pack under
+[`pilot/synthetic/`](../pilot/synthetic/). It runs a fictional policy and
+fictional subject facts through the same compiler and evaluator used for a
+release. It proves the expected approval, threshold failure, missing-evidence
+failure, and human-review routing paths, and retains canonical SHA-256 evidence
+for each case.
+
+This is useful for engineering regression control and a dry-run of the pilot
+method. It is not evidence that any real policy has been modelled correctly. A
+real corpus and historical outcomes remain institutional inputs, subject to the
+controls below.
+
 ## Institutional Inputs Required
 
 1. A bounded decision: for example, one programme progression determination or

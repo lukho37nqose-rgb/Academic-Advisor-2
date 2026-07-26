@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import AxeBuilder from '@axe-core/playwright';
 
 async function openApplication(page: Page) {
     for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -95,6 +96,67 @@ test.describe('Reasoning Graph Observability Dashboard', () => {
     });
 });
 
+test.describe('Subject Decision Review', () => {
+    test('allows a subject to request a review only for their loaded decision trace', async ({ page }) => {
+        const subjectGraph = {
+            ...mockGraphEligible,
+            id: 'trace_subject',
+            evaluation_context: { domain_id: 'dom_subject', release_version: '2026.1' },
+        };
+        await page.route('**/api/v1/reasoning/trace_subject', async route => {
+            await route.fulfill({ json: subjectGraph });
+        });
+        await page.route('**/api/v1/decision-reviews', async route => {
+            if (route.request().method() === 'GET') {
+                await route.fulfill({ json: { items: [] } });
+                return;
+            }
+            expect(route.request().postDataJSON()).toEqual({
+                domain_id: 'dom_subject',
+                reasoning_graph_id: 'trace_subject',
+                category: 'evidence_correction',
+                message: 'The GPA fact does not reflect my corrected record.',
+                disputed_fact_paths: ['academic.gpa'],
+            });
+            await route.fulfill({
+                status: 201,
+                json: {
+                    id: 'review_subject_1', domain_id: 'dom_subject', subject_id: 'subject_1', reasoning_graph_id: 'trace_subject',
+                    category: 'evidence_correction', message: 'The GPA fact does not reflect my corrected record.',
+                    disputed_fact_paths: ['academic.gpa'], submitted_evidence_ids: [], status: 'SUBMITTED',
+                },
+            });
+        });
+
+        await page.goto('/?experience=subject&trace=trace_subject', { waitUntil: 'domcontentloaded' });
+        await expect(page.getByRole('heading', { name: 'Decision review' })).toBeVisible();
+        await page.getByRole('checkbox', { name: 'academic.gpa' }).check();
+        await page.getByLabel('Tell us what should be checked').fill('The GPA fact does not reflect my corrected record.');
+        await page.getByRole('button', { name: 'Request review' }).click();
+        await expect(page.getByText('Review request recorded. Reference: review_subject_1.')).toBeVisible();
+    });
+
+    test('has no automated accessibility violations in the trace-bound review form', async ({ page }) => {
+        const subjectGraph = {
+            ...mockGraphEligible,
+            id: 'trace_accessible',
+            evaluation_context: { domain_id: 'dom_subject', release_version: '2026.1' },
+        };
+        await page.route('**/api/v1/reasoning/trace_accessible', async route => {
+            await route.fulfill({ json: subjectGraph });
+        });
+        await page.route('**/api/v1/decision-reviews', async route => {
+            await route.fulfill({ json: { items: [] } });
+        });
+
+        await page.goto('/?experience=subject&trace=trace_accessible', { waitUntil: 'domcontentloaded' });
+        await expect(page.getByRole('heading', { name: 'Request a decision review' })).toBeVisible();
+
+        const accessibilityScan = await new AxeBuilder({ page }).include('main').analyze();
+        expect(accessibilityScan.violations).toEqual([]);
+    });
+});
+
 test.describe('Governance Desk', () => {
     test('loads Edge metadata policy and submits a quick edit', async ({ page }) => {
         await page.route('**/api/v1/admin/permissions*', async route => {
@@ -166,6 +228,38 @@ test.describe('Governance Desk', () => {
 });
 
 test.describe('Institutional Input And Public Access', () => {
+    test('lets staff preview a CSV export using only declared decision facts', async ({ page }) => {
+        await page.route('**/api/v1/admin/domains', async route => {
+            await route.fulfill({ json: { items: [{ domain_id: 'dom_import', domain_name: 'Student Support Eligibility' }] } });
+        });
+        await page.route('**/api/v1/admin/domains/dom_import/record-import-fields', async route => {
+            await route.fulfill({ json: { items: [{ target_path: 'facts.household_income', label: 'Annual household income', schema_type: 'number' }] } });
+        });
+        await page.route('**/api/v1/admin/system-record-imports/preview', async route => {
+            expect(route.request().method()).toBe('POST');
+            await route.fulfill({
+                json: {
+                    contract_sha256: 'a'.repeat(64), source_sha256: 'b'.repeat(64), source_system: 'Example records', mapping_id: 'income-v1',
+                    row_count: 2, accepted_record_count: 2, rejected_row_count: 0, ignored_columns: ['unneeded_note'], issues: [],
+                },
+            });
+        });
+
+        await openApplication(page);
+        await page.getByRole('button', { name: 'System Records' }).click();
+        await page.getByLabel('CSV export').setInputFiles({
+            name: 'records.csv', mimeType: 'text/csv', buffer: Buffer.from('record_id,version,income\nsubject_1,1,120000\n'),
+        });
+        await page.getByLabel('Mapping name').fill('income-v1');
+        await page.getByLabel('Source system').fill('Example records');
+        await page.getByLabel('Subject identifier column').fill('record_id');
+        await page.getByLabel('Source record version column').fill('version');
+        await page.getByLabel('Export column name').fill('income');
+        await page.getByRole('button', { name: 'Check export' }).click();
+        await expect(page.getByRole('heading', { name: 'Export check' })).toBeVisible();
+        await expect(page.getByText('Ignored columns: unneeded_note.')).toBeVisible();
+    });
+
     test('creates a policy draft from guided institutional input', async ({ page }) => {
         await page.route('**/api/v1/admin/institutional-inputs/domains', async route => {
             const payload = route.request().postDataJSON();

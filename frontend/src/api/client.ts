@@ -48,6 +48,10 @@ export interface ReasoningGraph {
     rule_graph_id: string;
     nodes: Record<string, GraphNode>;
     edges: GraphEdge[];
+    evaluation_context?: {
+        domain_id: string;
+        release_version: string;
+    };
 }
 
 export interface QuickEditPayload {
@@ -206,6 +210,40 @@ export interface AdminDomain {
     domain_name: string;
 }
 
+export interface RecordImportField {
+    target_path: string;
+    label: string;
+    schema_type: 'string' | 'number' | 'boolean';
+}
+
+export interface SystemRecordImportFieldMapping {
+    source_column: string;
+    target_path: string;
+    value_type: 'text' | 'integer' | 'number' | 'boolean' | 'date';
+    required: boolean;
+}
+
+export interface SystemRecordImportContract {
+    mapping_id: string;
+    source_system: string;
+    subject_identifier_column: string;
+    source_record_version_column: string;
+    source_as_of_date_column?: string;
+    fields: SystemRecordImportFieldMapping[];
+}
+
+export interface SystemRecordImportPreview {
+    contract_sha256: string;
+    source_sha256: string;
+    source_system: string;
+    mapping_id: string;
+    row_count: number;
+    accepted_record_count: number;
+    rejected_row_count: number;
+    ignored_columns: string[];
+    issues: Array<{ row_number?: number | null; code: string; message: string }>;
+}
+
 export type SupportRequestStatus = 'OPEN' | 'IN_PROGRESS' | 'CLOSED';
 
 export interface SupportRequest {
@@ -249,6 +287,14 @@ export interface DecisionReviewCase {
     is_overdue?: boolean;
     created_at?: string | null;
     updated_at?: string | null;
+}
+
+export interface DecisionReviewSubmissionPayload {
+    domain_id: string;
+    reasoning_graph_id: string;
+    category: DecisionReviewCase['category'];
+    message: string;
+    disputed_fact_paths?: string[];
 }
 
 export interface PendingPolicyReview {
@@ -415,6 +461,28 @@ export const fetchAdminDomains = async (): Promise<AdminDomain[]> => {
     return response.data.items;
 }
 
+export const fetchRecordImportFields = async (domainId: string): Promise<RecordImportField[]> => {
+    const response = await apiClient.get<{ items: RecordImportField[] }>(`/admin/domains/${domainId}/record-import-fields`);
+    return response.data.items;
+}
+
+export const previewSystemRecordImport = async (
+    domainId: string,
+    contract: SystemRecordImportContract,
+    file: File,
+): Promise<SystemRecordImportPreview> => {
+    const formData = new FormData();
+    formData.append('domain_id', domainId);
+    formData.append('contract_json', JSON.stringify(contract));
+    formData.append('file', file);
+    const response = await apiClient.post<SystemRecordImportPreview>(
+        '/admin/system-record-imports/preview',
+        formData,
+        { headers: { 'Content-Type': 'multipart/form-data' } },
+    );
+    return response.data;
+}
+
 export const fetchSupportRequests = async (domainId: string): Promise<SupportRequest[]> => {
     const response = await apiClient.get<{ items: SupportRequest[] }>('/admin/support-requests', {
         params: { domain_id: domainId },
@@ -434,11 +502,18 @@ export const updateSupportRequestStatus = async (
     return response.data;
 }
 
-export const fetchDecisionReviewCases = async (domainId: string): Promise<DecisionReviewCase[]> => {
+export const fetchDecisionReviewCases = async (domainId?: string): Promise<DecisionReviewCase[]> => {
     const response = await apiClient.get<{ items: DecisionReviewCase[] }>('/decision-reviews', {
-        params: { domain_id: domainId },
+        params: domainId ? { domain_id: domainId } : undefined,
     });
     return response.data.items;
+}
+
+export const submitDecisionReview = async (
+    payload: DecisionReviewSubmissionPayload,
+): Promise<DecisionReviewCase> => {
+    const response = await apiClient.post<DecisionReviewCase>('/decision-reviews', payload);
+    return response.data;
 }
 
 export const updateDecisionReviewCase = async (

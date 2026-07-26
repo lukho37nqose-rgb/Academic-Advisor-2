@@ -35,6 +35,15 @@ The repository demonstrates:
 - subject-to-identity ownership enforcement for evidence, evaluations, and traces;
 - handbook PDF source verification with resumable page-level worker checkpoints;
 - reviewed OCR proposals that cannot enter a release without a human decision;
+- a fixture-backed synthetic pilot rehearsal pack with canonical decision-trace
+  digests, including approval, fail-closed, and manual-review paths;
+- a one-way, hash-verified system-of-record CSV validation and reconciliation
+  boundary that blocks partial or malformed imports;
+- fail-closed external workflow handling: workflow rules are selected and
+  audited but cannot simulate or deliver an institutional write without a
+  durable dispatcher;
+- a one-way, hash-verified system-of-record CSV validation and reconciliation
+  boundary that blocks partial or malformed imports;
 - production fail-closed configuration checks, non-root container execution,
   separate migration deployment, and health/readiness probes with request IDs;
 - a reference React interface for reasoning traces and governance.
@@ -50,6 +59,24 @@ It does not yet prove:
 The next empirical milestone is to model and test one real institution's actual
 rules and evidence, including ambiguity, superseded policy, and difficult source
 documents.
+
+## Synthetic Pilot Rehearsal
+
+Before any institution authorises source access, the evaluator can be rehearsed
+against the fictional fixture pack. It uses the normal release compiler and
+decision engine, but never calls an external system or uses personal data.
+
+```powershell
+python -m app.sdk.pilot_rehearsal `
+  --policy pilot/synthetic/progression_policy.json `
+  --suite pilot/synthetic/progression_cases.json `
+  --output pilot/synthetic/reports/progression_rehearsal.json
+```
+
+The resulting report is deterministic: the policy, each case input, and each
+decision-bearing trace have SHA-256 digests. The command exits non-zero when a
+golden outcome changes. See [the synthetic rehearsal pack](pilot/synthetic/README.md)
+for the boundary between this fixture and a future approved institutional corpus.
 
 ## Core And Edge
 
@@ -102,6 +129,10 @@ npm.cmd run lint
 npx.cmd playwright install chromium
 npm.cmd run test:e2e
 ```
+
+`test:e2e` selects a temporary local port and lets Playwright own the Vite
+server lifecycle. This avoids a Windows child-process shutdown hang and never
+attaches a test run to an already-open development server.
 
 ## Configuration
 
@@ -170,3 +201,11 @@ The UCT case-study boundary and unresolved deployment risks are in
 [UCT_PILOT_CHARTER.md](docs/UCT_PILOT_CHARTER.md) and
 [UCT_THREAT_MODEL.md](docs/UCT_THREAT_MODEL.md). The deployment sequence is in
 [PRODUCTION_DEPLOYMENT.md](docs/PRODUCTION_DEPLOYMENT.md).
+The system-of-record import contract and reconciliation boundary are in
+[SYSTEM_OF_RECORD_IMPORTS.md](docs/SYSTEM_OF_RECORD_IMPORTS.md).
+The external workflow safety boundary is in
+[WORKFLOW_DISPATCH.md](docs/WORKFLOW_DISPATCH.md).
+The recovery evidence expected before and during a real pilot is in
+[RECOVERY_EXERCISES.md](docs/RECOVERY_EXERCISES.md).
+The system-of-record import contract and reconciliation boundary are in
+[SYSTEM_OF_RECORD_IMPORTS.md](docs/SYSTEM_OF_RECORD_IMPORTS.md).

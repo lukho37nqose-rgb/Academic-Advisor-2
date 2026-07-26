@@ -1,7 +1,10 @@
 import { defineConfig, devices } from '@playwright/test';
 
 const packageRunner = process.platform === 'win32' ? 'npx.cmd' : 'npx';
-const externalServer = process.env.PLAYWRIGHT_EXTERNAL_SERVER === '1';
+const host = '127.0.0.1';
+const port = process.env.PLAYWRIGHT_PORT || '5173';
+const baseURL = process.env.PLAYWRIGHT_BASE_URL || `http://${host}:${port}`;
+const reuseExistingServer = process.env.PLAYWRIGHT_REUSE_EXISTING_SERVER === '1';
 
 export default defineConfig({
   testDir: './tests',
@@ -11,7 +14,7 @@ export default defineConfig({
   workers: process.env.CI ? 1 : undefined,
   reporter: 'html',
   use: {
-    baseURL: process.env.PLAYWRIGHT_BASE_URL || 'http://127.0.0.1:5173',
+    baseURL,
     trace: 'on-first-retry',
   },
   projects: [
@@ -20,10 +23,10 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'] },
     },
   ],
-  webServer: externalServer ? undefined : {
-    command: `${packageRunner} vite --host 127.0.0.1 --port 5173`,
-    url: 'http://127.0.0.1:5173',
-    reuseExistingServer: !process.env.CI,
+  webServer: {
+    command: `${packageRunner} vite --host ${host} --port ${port} --strictPort`,
+    url: baseURL,
+    reuseExistingServer,
     timeout: 30_000,
   },
 });

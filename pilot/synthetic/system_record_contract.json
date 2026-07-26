@@ -1,0 +1,24 @@
+{
+  "mapping_id": "synthetic-progress-records-v1",
+  "source_system": "Synthetic student records export",
+  "subject_identifier_column": "record_identifier",
+  "source_record_version_column": "record_version",
+  "source_as_of_date_column": "as_of_date",
+  "fields": [
+    {
+      "source_column": "active_registration",
+      "target_path": "registration.is_active",
+      "value_type": "boolean"
+    },
+    {
+      "source_column": "completed_credits",
+      "target_path": "academic.completed_credits",
+      "value_type": "integer"
+    },
+    {
+      "source_column": "administrative_block",
+      "target_path": "account.has_administrative_block",
+      "value_type": "boolean"
+    }
+  ]
+}

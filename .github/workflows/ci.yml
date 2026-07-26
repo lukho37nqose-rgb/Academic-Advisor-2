@@ -85,6 +85,17 @@ jobs:
         path: frontend/playwright-report/
         retention-days: 14
 
+  container-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+    - name: Build locked application container
+      run: docker build --pull=false --tag institutional-reasoning-engine:${{ github.sha }} .
+
   postgres-rls-rehearsal:
     runs-on: ubuntu-latest
     timeout-minutes: 15

@@ -1,11 +1,12 @@
 from contextlib import asynccontextmanager
+import json
 import re
 import time
 
 from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks, UploadFile, File, Form, Header, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 from typing import Dict, Any, List, Optional, Literal, cast
 import os
 import uuid
@@ -51,6 +52,10 @@ from app.core.models import RuleGraph, ReasoningGraph, EvaluationContext, Eviden
 from app.core.compiler import compile_release_to_graph
 from app.core.operators import UnsupportedOperatorError
 from app.adapters.evidence import RawTextAdapter
+from app.adapters.system_record_import import (
+    SystemRecordImportContract,
+    preview_system_record_csv,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from app.core.crypto import CryptoService
@@ -104,6 +109,17 @@ app.add_middleware(
 )
 
 _REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+
+
+def system_record_import_max_bytes() -> int:
+    """Bound an in-memory CSV preview independently of caller-provided limits."""
+
+    configured = os.environ.get("SYSTEM_RECORD_IMPORT_MAX_BYTES", "20000000")
+    try:
+        value = int(configured)
+    except ValueError:
+        return 20_000_000
+    return min(max(value, 1_024), 200_000_000)
 
 
 @app.middleware("http")
@@ -849,6 +865,69 @@ async def list_admin_domains(
             domain_ids=domain_ids,
         )
     }
+
+
+@app.get("/api/v1/admin/domains/{domain_id}/record-import-fields")
+async def list_record_import_fields(
+    domain_id: str,
+    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.RULE_AUTHOR])),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Returns only schema-approved, labelled destinations for a CSV mapping."""
+
+    ensure_domain_access(user, domain_id)
+    fields = await InstitutionalInputRepository(db).list_domain_fact_fields(
+        tenant_id=user.tenant_id,
+        domain_id=domain_id,
+    )
+    if fields is None:
+        raise HTTPException(status_code=404, detail="Decision domain was not found.")
+    return {"items": fields}
+
+
+@app.post("/api/v1/admin/system-record-imports/preview")
+async def preview_system_record_import(
+    domain_id: str = Form(...),
+    contract_json: str = Form(...),
+    file: UploadFile = File(...),
+    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.RULE_AUTHOR])),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Validate a one-way CSV export without persisting it or calling its source."""
+
+    ensure_domain_access(user, domain_id)
+    if not file.filename or not file.filename.lower().endswith(".csv"):
+        raise HTTPException(status_code=422, detail="A CSV export file is required.")
+    maximum_bytes = system_record_import_max_bytes()
+    content = await file.read(maximum_bytes + 1)
+    if len(content) > maximum_bytes:
+        raise HTTPException(status_code=413, detail="CSV exceeds the server preview size limit.")
+    try:
+        raw_contract = json.loads(contract_json)
+        if not isinstance(raw_contract, dict):
+            raise ValueError("Import contract must be an object.")
+        contract = SystemRecordImportContract.model_validate(raw_contract).model_copy(
+            update={"max_bytes": min(int(raw_contract.get("max_bytes", maximum_bytes)), maximum_bytes)}
+        )
+    except (TypeError, ValueError, ValidationError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=422, detail="The import mapping is invalid.") from exc
+
+    approved_fields = await InstitutionalInputRepository(db).list_domain_fact_fields(
+        tenant_id=user.tenant_id,
+        domain_id=domain_id,
+    )
+    if approved_fields is None:
+        raise HTTPException(status_code=404, detail="Decision domain was not found.")
+    approved_targets = {field["target_path"] for field in approved_fields}
+    unsupported_targets = sorted(
+        field.target_path for field in contract.fields if field.target_path not in approved_targets
+    )
+    if unsupported_targets:
+        raise HTTPException(
+            status_code=422,
+            detail="The mapping contains facts that are not declared for this decision domain.",
+        )
+    return preview_system_record_csv(content, contract)
 
 
 @app.post("/api/v1/governance/handbook-upload-sessions", status_code=201)

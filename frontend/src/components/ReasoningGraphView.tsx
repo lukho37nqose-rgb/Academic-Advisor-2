@@ -1,9 +1,11 @@
 import React from 'react';
 import type { ReasoningGraph } from '../api/client';
 import { CheckCircle2, XCircle, AlertCircle, FileText } from 'lucide-react';
+import { SubjectDecisionReview } from './SubjectDecisionReview';
 
 interface Props {
   graph: ReasoningGraph | null;
+  showDecisionReview?: boolean;
 }
 
 const NodeIcon = ({ type, passed }: { type: string, passed?: boolean | string }) => {
@@ -14,7 +16,7 @@ const NodeIcon = ({ type, passed }: { type: string, passed?: boolean | string })
   return <div className="w-5 h-5 rounded-full bg-gray-200" />;
 };
 
-export const ReasoningGraphView: React.FC<Props> = ({ graph }) => {
+export const ReasoningGraphView: React.FC<Props> = ({ graph, showDecisionReview = false }) => {
   if (!graph) return <div className="p-8 text-center text-muted">Loading graph data...</div>;
 
   // We sort nodes conceptually: Facts -> Evaluations -> Conclusion
@@ -93,6 +95,7 @@ export const ReasoningGraphView: React.FC<Props> = ({ graph }) => {
           </div>
         </div>
       </div>
+      {showDecisionReview && <SubjectDecisionReview graph={graph} />}
     </div>
   );
 };

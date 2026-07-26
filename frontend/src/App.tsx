@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ReasoningGraphView } from './components/ReasoningGraphView';
 import { GovernanceDesk } from './components/GovernanceDesk';
 import { InstitutionalIntake } from './components/InstitutionalIntake';
@@ -8,11 +8,12 @@ import { PolicyReview } from './components/PolicyReview';
 import { HandbookIntake } from './components/HandbookIntake';
 import { DecisionReviewInbox } from './components/DecisionReviewInbox';
 import { PolicyAmbiguityRegister } from './components/PolicyAmbiguityRegister';
+import { SystemRecordImport } from './components/SystemRecordImport';
 import { evaluateEvidence, fetchReasoningGraph } from './api/client';
 import type { ReasoningGraph } from './api/client';
-import { FileSearch, BookOpen, Building2, Settings, LayoutGrid, ShieldCheck, Inbox, ClipboardCheck, Files, MessageSquareWarning, Scale } from 'lucide-react';
+import { FileSearch, BookOpen, Building2, Settings, LayoutGrid, ShieldCheck, Inbox, ClipboardCheck, Files, MessageSquareWarning, Scale, TableProperties } from 'lucide-react';
 
-type ActiveView = 'investigations' | 'governance' | 'institution_setup' | 'policy_guides' | 'assistance_inbox' | 'decision_review_inbox' | 'policy_review' | 'policy_ambiguities' | 'handbook_intake';
+type ActiveView = 'investigations' | 'governance' | 'institution_setup' | 'policy_guides' | 'assistance_inbox' | 'decision_review_inbox' | 'policy_review' | 'policy_ambiguities' | 'handbook_intake' | 'record_import';
 
 const viewHeading: Record<ActiveView, [string, string]> = {
   investigations: ['Investigations', 'Academic Standing Review'],
@@ -24,6 +25,7 @@ const viewHeading: Record<ActiveView, [string, string]> = {
   policy_review: ['Policy Review', 'Release Approval'],
   policy_ambiguities: ['Policy Register', 'Interpretations'],
   handbook_intake: ['Handbook Intake', 'Source Verification'],
+  record_import: ['System Records', 'CSV Preview'],
 };
 
 function App() {
@@ -31,6 +33,22 @@ function App() {
   const [activeView, setActiveView] = useState<ActiveView>('investigations');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const searchParameters = new URLSearchParams(window.location.search);
+  const isSubjectExperience = searchParameters.get('experience') === 'subject';
+  const requestedTraceId = searchParameters.get('trace');
+
+  useEffect(() => {
+    if (!isSubjectExperience || !requestedTraceId) return;
+    setLoading(true);
+    setError(null);
+    void fetchReasoningGraph(requestedTraceId)
+      .then(setGraph)
+      .catch((requestError: unknown) => {
+        const message = requestError as { message?: string };
+        setError(message.message || 'The requested decision could not be loaded.');
+      })
+      .finally(() => setLoading(false));
+  }, [isSubjectExperience, requestedTraceId]);
 
   // In a real app, this would be a multi-step form. 
   // For the sandbox, we trigger the demo evaluation flow.
@@ -50,6 +68,22 @@ function App() {
       setLoading(false);
     }
   };
+
+  if (isSubjectExperience) {
+    return (
+      <main className="min-h-screen bg-white px-4 py-8 sm:px-8">
+        <div className="mx-auto max-w-5xl">
+          <header className="border-b border-border pb-5">
+            <h1 className="text-xl font-semibold">Decision review</h1>
+          </header>
+          {loading && <p className="py-8 text-sm text-muted">Loading your decision...</p>}
+          {error && <div role="alert" className="mt-6 border border-rose-200 bg-rose-50 px-3 py-3 text-sm text-rose-700">{error}</div>}
+          {!loading && !error && !graph && <p className="py-8 text-sm text-muted">No decision was selected.</p>}
+          {!loading && graph && <ReasoningGraphView graph={graph} showDecisionReview />}
+        </div>
+      </main>
+    );
+  }
 
   return (
     <div className="flex h-screen bg-white">
@@ -99,6 +133,16 @@ function App() {
           >
             <Files className="w-4 h-4 text-muted" />
             Handbook Intake
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveView('record_import')}
+            className={`flex w-full items-center gap-3 rounded px-3 py-2 text-left text-sm font-medium transition-colors ${
+              activeView === 'record_import' ? 'bg-accent' : 'text-muted hover:bg-accent'
+            }`}
+          >
+            <TableProperties className="w-4 h-4 text-muted" />
+            System Records
           </button>
           <button
             type="button"
@@ -216,6 +260,7 @@ function App() {
            {activeView === 'policy_review' && <PolicyReview />}
            {activeView === 'policy_ambiguities' && <PolicyAmbiguityRegister />}
            {activeView === 'handbook_intake' && <HandbookIntake />}
+           {activeView === 'record_import' && <SystemRecordImport />}
         </div>
       </main>
     </div>

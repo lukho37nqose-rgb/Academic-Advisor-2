@@ -41,11 +41,6 @@ class EventDispatcher:
 dispatcher = EventDispatcher()
 
 
-# --- Mock Handlers for Demonstration ---
-
-async def on_evaluation_completed(payload: Dict[str, Any]):
-    """Example subscriber that might trigger Webhooks or external Workflow execution."""
-    print(f"\n[EVENT DISPATCHER] Triggered Webhook for evaluation completion: {payload.get('evaluation_id')}")
-
-# Register default system handlers
-dispatcher.subscribe("evaluation.completed", on_evaluation_completed)
+# No default subscribers are registered. In-process event handlers are useful
+# for local observability only; they are not a delivery guarantee and may not
+# call an institutional system of record.

@@ -362,6 +362,39 @@ class InstitutionalInputRepository:
             for domain in result.scalars().all()
         ]
 
+    async def list_domain_fact_fields(
+        self,
+        *,
+        tenant_id: str,
+        domain_id: str,
+    ) -> list[dict[str, str]] | None:
+        """Return labelled facts declared by the no-code domain intake schema."""
+
+        result = await self.session.execute(
+            select(DBDomain).where(
+                DBDomain.id == domain_id,
+                DBDomain.tenant_id == tenant_id,
+            )
+        )
+        domain = result.scalar_one_or_none()
+        if domain is None:
+            return None
+        schema = cast(dict[str, Any], domain.schema_definition)
+        properties = schema.get("properties", {})
+        facts = properties.get("facts", {}) if isinstance(properties, dict) else {}
+        fact_properties = facts.get("properties", {}) if isinstance(facts, dict) else {}
+        if not isinstance(fact_properties, dict):
+            return []
+        return [
+            {
+                "target_path": f"facts.{key}",
+                "label": str(value.get("title", key)),
+                "schema_type": str(value.get("type", "string")),
+            }
+            for key, value in sorted(fact_properties.items())
+            if isinstance(value, dict)
+        ]
+
 
 class HandbookRepository:
     """Persistent job and page checkpoints for large handbook extraction."""
