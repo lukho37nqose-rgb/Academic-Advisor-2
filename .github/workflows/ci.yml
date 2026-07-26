@@ -24,7 +24,7 @@ jobs:
         pip install -r requirements.txt
         
     - name: Banned Words Check (Domain Leakage)
-      run: ./tools/banned_words_check.sh
+      run: bash ./tools/banned_words_check.sh
       
     - name: Type checking with MyPy
       run: python -m mypy --explicit-package-bases app tests
