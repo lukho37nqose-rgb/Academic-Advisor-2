@@ -170,17 +170,31 @@ def test_public_policy_guide_exposes_approved_rules_and_separate_assistance(tmp_
     assert auditor_update.status_code == 403
 
 
-def test_public_support_is_rate_limited_before_storage(monkeypatch):
+def test_public_support_is_rate_limited_before_storage(tmp_path, monkeypatch):
     monkeypatch.setenv("PUBLIC_SUPPORT_RATE_LIMIT_MAX", "1")
     monkeypatch.setenv("PUBLIC_SUPPORT_RATE_LIMIT_WINDOW_SECONDS", "60")
-    client = TestClient(app)
+    database_path = tmp_path / "public_access_rate_limit.db"
+    engine = create_async_engine(f"sqlite+aiosqlite:///{database_path}")
+    session_factory = async_sessionmaker(bind=engine, expire_on_commit=False)
+    asyncio.run(_create_schema(engine))
+
+    async def _test_db_session():
+        async with session_factory() as session:
+            yield session
+
+    app.dependency_overrides[get_db_session] = _test_db_session
     payload = {
         "category": "other",
         "message": "I need help with this institutional process.",
     }
 
-    first = client.post("/api/v1/public/policy-guides/dom_rate_limit_unique/support", json=payload)
-    second = client.post("/api/v1/public/policy-guides/dom_rate_limit_unique/support", json=payload)
+    try:
+        with TestClient(app) as client:
+            first = client.post("/api/v1/public/policy-guides/dom_rate_limit_unique/support", json=payload)
+            second = client.post("/api/v1/public/policy-guides/dom_rate_limit_unique/support", json=payload)
+    finally:
+        app.dependency_overrides.clear()
+        asyncio.run(engine.dispose())
 
     assert first.status_code == 404
     assert second.status_code == 429
