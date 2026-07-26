@@ -72,22 +72,3 @@ async def call_structured_extraction(raw_text: str, schema_definition: Dict[str,
     )
     try: return json.loads(response.choices[0].message.content) # type: ignore
     except Exception as e: raise ValueError(f"LLM Extraction failed: {str(e)}")
-
-
-async def call_explanation_generation(trace_json: str, system_prompt: str) -> str:
-    """
-    Asynchronously calls the LLM to generate prose based strictly on the deterministic trace.
-    """
-    client = get_async_client()
-    if not client:
-        return "Based on the provided trace, the evaluation is complete. [MOCK EXPLANATION]"
-        
-    openai_client = cast(Any, client.client)
-    response = await openai_client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Here is the evaluation trace:\n{trace_json}"}
-        ]
-    )
-    return response.choices[0].message.content # type: ignore

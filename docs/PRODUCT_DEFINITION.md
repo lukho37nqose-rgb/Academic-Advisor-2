@@ -17,6 +17,18 @@ decision that is:
 The frontend is not the product. The runtime sits above systems of record and can
 be consumed by their existing interfaces.
 
+## Transparency Principle
+
+**The IRE personalises access to institutional reasoning, not institutional
+policy.** An approved policy release remains common to everyone it governs.
+The system combines that common release with a person's authorised record to
+produce a traceable personal view of how the policy applied in their case. It
+does not create a private rule, replace institutional judgement, or conceal a
+human-review requirement as an automated outcome.
+
+See [TRANSPARENCY_PRINCIPLES.md](TRANSPARENCY_PRINCIPLES.md) for the subject
+experience and safety boundaries that follow from this principle.
+
 ## Architectural Thesis
 
 Opacity is the mechanism; legibility is the intervention.
@@ -59,7 +71,8 @@ messy policy corpus. In particular:
 - source authority and supersession rules have not been tested in a live policy
   environment;
 - administrators have not used the system without reading JSON;
-- governed subjects do not yet have a self-service decision and appeal surface;
+- the subject experience is trace-based but does not yet have a complete
+  institution-integrated entry point, notification flow, or casework portal;
 - enterprise identity, records, retention, privacy, and operations remain to be
   integrated.
 

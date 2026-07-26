@@ -759,8 +759,12 @@ async def start_evaluation(
         
         # Extract Decision
         final_node = next((n for n in reasoning_graph.nodes.values() if n.type == "conclusion"), None)
-        passed = final_node.data.get("overall_passed", False) if final_node else False
-        confidence = final_node.computed_confidence if final_node else 0.0
+        if final_node is None:
+            raise HTTPException(status_code=500, detail="Evaluation did not produce a complete reasoning trace.")
+        passed = final_node.data.get("overall_passed")
+        if passed is not True and passed is not False and passed != "NEEDS_MANUAL_REVIEW":
+            raise HTTPException(status_code=500, detail="Evaluation produced an unsupported trace outcome.")
+        confidence = final_node.computed_confidence
         
         if passed == "NEEDS_MANUAL_REVIEW":
             decision = "NEEDS_MANUAL_REVIEW"
@@ -769,9 +773,8 @@ async def start_evaluation(
         else:
             decision = "INELIGIBLE"
 
-        # Generate the human-readable explanation strictly AFTER the decision
-        # is final. format_explanation only ever reads the trace -- it cannot
-        # change overall_decision, only describe it.
+        # Generate the human-readable explanation strictly after deterministic
+        # evaluation. It only reads the trace and cannot change the outcome.
         reasoning_graph.explanation = await format_explanation(reasoning_graph)
 
         # Persist Trace (now including the explanation, in the same JSON blob)

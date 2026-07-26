@@ -11,8 +11,14 @@ Evidence -> Claims -> Conflict resolution -> Facts
          -> RuleGraph evaluation -> ReasoningGraph -> Decision -> Explanation
 ```
 
-LLMs may assist at the extraction and explanation boundaries. They never decide.
+LLMs may assist with source extraction. They never decide or write the
+subject-facing account of a decision.
 Evaluation between accepted facts and a compiled policy release is deterministic.
+
+The product principle is **personalise access to institutional reasoning, not
+institutional policy**: approved rules remain common, while an authorised person
+can see how those rules applied to their own record. See
+[Transparency Principles](docs/TRANSPARENCY_PRINCIPLES.md).
 
 ## Current State
 

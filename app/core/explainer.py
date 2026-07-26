@@ -1,35 +1,53 @@
-"""
-Explanation Layer.
+"""Deterministic, trace-bound summaries for governed subjects."""
 
-Turns an already-computed, already-cited ReasoningGraph into human-readable,
-citation-bound prose. This module runs strictly AFTER the deterministic
-decision exists (see engine.py) and must never be able to change it -- it
-translates a decision, it does not make one.
-"""
+from app.core.models import GraphNode, ReasoningGraph
 
-import json
-from app.core.models import ReasoningGraph
-from app.services.llm_gateway import call_explanation_generation
 
-EXPLANATION_SYSTEM_PROMPT = """You are drafting the explanation shown to someone
-after a decision about them has already been made by a separate, deterministic
-rules engine. That decision is final and is provided to you as a trace.
+def _describe_conditions(nodes: list[GraphNode]) -> str:
+    descriptions: list[str] = []
+    for node in nodes:
+        citation = node.data.get("citation")
+        if isinstance(citation, str) and citation:
+            descriptions.append(f"{node.label} ({citation})")
+        else:
+            descriptions.append(node.label)
+    return "; ".join(descriptions)
 
-Hard rules:
-- Never contradict the trace's overall decision. Your job is to explain it,
-  not to re-decide it or hedge on it.
-- Only reference facts, rule labels, and source citations that literally
-  appear in the trace JSON below. Never invent a rule, a citation, a number,
-  or a fact that is not present in the trace.
-- If a node's status is NEEDS_MANUAL_REVIEW, say so plainly and explain what
-  made it ambiguous -- do not resolve the ambiguity yourself.
-- Write for the person the decision is about: plain language, no jargon,
-  cite the specific rule that drove each part of the outcome.
-- Keep it to a short paragraph. This is a decision explanation, not a report.
-"""
+
+def _evaluations_with_status(graph: ReasoningGraph, status: bool | str) -> list[GraphNode]:
+    return [
+        node
+        for node in graph.nodes.values()
+        if node.type == "rule_evaluation"
+        and node.data.get("passed") == status
+        and node.data.get("expected_condition") is not None
+    ]
 
 
 async def format_explanation(graph: ReasoningGraph) -> str:
-    """Generates a human-readable explanation of the reasoning graph."""
-    trace_json = json.dumps(graph.model_dump(mode="json"))
-    return await call_explanation_generation(trace_json, EXPLANATION_SYSTEM_PROMPT)
+    """Return a short explanation composed only from the recorded trace."""
+    conclusion = next((node for node in graph.nodes.values() if node.type == "conclusion"), None)
+    outcome = conclusion.data.get("overall_passed") if conclusion else None
+
+    if outcome == "NEEDS_MANUAL_REVIEW":
+        conditions = _describe_conditions(_evaluations_with_status(graph, "NEEDS_MANUAL_REVIEW"))
+        detail = f" for: {conditions}" if conditions else " under the published process"
+        return (
+            f"Human consideration is required{detail}. This is not a final "
+            "institutional decision or an adverse outcome."
+        )
+
+    if outcome is True:
+        conditions = _describe_conditions(_evaluations_with_status(graph, True))
+        detail = f" Conditions evaluated: {conditions}." if conditions else ""
+        return f"The published conditions evaluated in this trace are currently satisfied.{detail}"
+
+    if outcome is False:
+        conditions = _describe_conditions(_evaluations_with_status(graph, False))
+        detail = f" Conditions not yet satisfied: {conditions}." if conditions else ""
+        return f"One or more published conditions are not yet satisfied.{detail}"
+
+    return (
+        "The available trace does not contain a complete policy position. "
+        "This is not a final institutional decision."
+    )

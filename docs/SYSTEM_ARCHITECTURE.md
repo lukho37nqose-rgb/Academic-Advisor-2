@@ -45,6 +45,12 @@ The protocol abandons linear evaluation in favor of explicit graph generation.
   *   **Edges:** `evaluates_to`, `depends_on`.
 * **Constraint:** The ReasoningGraph IS the evaluation. The final true/false decision is merely a flattened projection of the `conclusion` node. The graph MUST capture the exact context (Tenant, Subject, Release, Timestamp) under which it was generated.
 
+* **Subject-view constraint:** A personal position view is a read-only
+projection of this trace. It may make the application of the shared release
+legible to the affected subject, but it MUST NOT create a subject-specific
+policy, alter the release, or represent a human-review trigger as a final
+institutional decision.
+
 ### 3.3 WorkflowGraph (Post-Evaluation)
 * **Definition:** The event-driven actions triggered by the result of a ReasoningGraph.
 * **Mechanism:** If the `conclusion` node passes, specific actions (e.g., "Generate Letter", "Notify SIS") are placed into a job queue for asynchronous execution.

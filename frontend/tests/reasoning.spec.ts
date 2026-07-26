@@ -49,7 +49,7 @@ const mockGraphEligible = {
     rule_graph_id: "rg_1",
     nodes: {
         "gn_fact_1": { id: "gn_fact_1", type: "fact", label: "Fact: academic.gpa", data: { resolved_value: 3.5 }, computed_confidence: 1.0 },
-        "gn_eval_1": { id: "gn_eval_1", type: "rule_evaluation", label: "Check GPA", data: { passed: true, expected_condition: ">=", expected_value: 3.0 }, computed_confidence: 1.0 },
+        "gn_eval_1": { id: "gn_eval_1", type: "rule_evaluation", label: "Check GPA", data: { passed: true, expected_condition: ">=", expected_value: 3.0, citation: "Academic Progress Policy 2026, section 3.1" }, computed_confidence: 1.0 },
         "gn_conclusion": { id: "gn_conclusion", type: "conclusion", label: "Final Conclusion", data: { overall_passed: true }, computed_confidence: 1.0 }
     },
     edges: []
@@ -66,6 +66,15 @@ const mockGraphManualReview = {
         "gn_conclusion": { id: "gn_conclusion", type: "conclusion", label: "Final Conclusion", data: { overall_passed: "NEEDS_MANUAL_REVIEW" }, computed_confidence: 0.5 }
     },
     edges: []
+};
+
+const mockGraphIncomplete = {
+    ...mockGraphEligible,
+    id: 'trace_incomplete',
+    nodes: {
+        'gn_fact_1': mockGraphEligible.nodes.gn_fact_1,
+        'gn_eval_1': mockGraphEligible.nodes.gn_eval_1,
+    },
 };
 
 test.describe('Workspace access boundaries', () => {
@@ -93,32 +102,49 @@ test.describe('Workspace access boundaries', () => {
         await expect(page.getByRole('button', { name: 'Policy Review' })).toHaveCount(0);
     });
 
-    test('renders an eligible trace only through the subject experience', async ({ page }) => {
+    test('renders a personal view of how the common policy applies to an eligible trace', async ({ page }) => {
         await page.route('**/api/v1/reasoning/trace_1', async route => {
             await route.fulfill({ json: mockGraphEligible });
         });
         await mockSessionCapabilities(page, subjectSession);
         await page.goto('/?experience=subject&trace=trace_1', { waitUntil: 'domcontentloaded' });
 
-        await expect(page.getByText('Final Conclusion')).toBeVisible();
-        await expect(page.getByRole('heading', { name: 'Eligible' })).toBeVisible();
-        await expect(page.getByText('Confidence Score: 100.0%')).toBeVisible();
-        
+        await expect(page.getByRole('heading', { name: 'How the published policy applies to your record' })).toBeVisible();
+        await expect(page.getByRole('heading', { name: 'The evaluated policy conditions are satisfied' })).toBeVisible();
+        await expect(page.getByRole('heading', { name: 'Why this is your current position' })).toBeVisible();
         await expect(page.getByText('academic.gpa')).toBeVisible();
         await expect(page.getByText('3.5')).toBeVisible();
         await expect(page.getByText('Check GPA')).toBeVisible();
+        await expect(page.getByText('Published condition: is at least 3')).toBeVisible();
+        await expect(page.getByText('Policy source: Academic Progress Policy 2026, section 3.1')).toBeVisible();
+        await expect(page.getByText('Confidence Score: 100.0%')).toHaveCount(0);
     });
 
-    test('renders a manual-review trace only through the subject experience', async ({ page }) => {
+    test('does not present a manual-review trace as a final adverse decision', async ({ page }) => {
         await page.route('**/api/v1/reasoning/trace_2', async route => {
             await route.fulfill({ json: mockGraphManualReview });
         });
         await mockSessionCapabilities(page, subjectSession);
         await page.goto('/?experience=subject&trace=trace_2', { waitUntil: 'domcontentloaded' });
 
-        await expect(page.getByRole('heading', { name: 'Needs Manual Review' })).toBeVisible();
-        await expect(page.getByText('Confidence Score: 50.0%')).toBeVisible();
+        await expect(page.getByRole('heading', { name: 'Human consideration is required' })).toBeVisible();
+        await expect(page.getByText('This is not, by itself, a final institutional decision or an adverse outcome.')).toBeVisible();
+        await expect(page.locator('[data-position-state="human_review"]')).toBeVisible();
         await expect(page.getByText('needs_human_review')).toBeVisible();
+        await expect(page.getByText('Needs Manual Review')).toHaveCount(0);
+    });
+
+    test('does not present an incomplete trace as an adverse policy position', async ({ page }) => {
+        await page.route('**/api/v1/reasoning/trace_incomplete', async route => {
+            await route.fulfill({ json: mockGraphIncomplete });
+        });
+        await mockSessionCapabilities(page, subjectSession);
+        await page.goto('/?experience=subject&trace=trace_incomplete', { waitUntil: 'domcontentloaded' });
+
+        await expect(page.getByRole('heading', { name: 'Your policy position needs institutional review' })).toBeVisible();
+        await expect(page.getByText('This is not a final institutional decision. An authorised institutional reviewer needs to confirm the next step.')).toBeVisible();
+        await expect(page.locator('[data-position-state="indeterminate"]')).toBeVisible();
+        await expect(page.getByText('One or more evaluated conditions are not yet satisfied')).toHaveCount(0);
     });
 });
 

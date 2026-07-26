@@ -7,7 +7,7 @@ import { InstitutionalIntake } from './components/InstitutionalIntake';
 import { PolicyAmbiguityRegister } from './components/PolicyAmbiguityRegister';
 import { PolicyReview } from './components/PolicyReview';
 import { PublicPolicyGuide } from './components/PublicPolicyGuide';
-import { ReasoningGraphView } from './components/ReasoningGraphView';
+import { SubjectPositionView } from './components/SubjectPositionView';
 import { SystemRecordImport } from './components/SystemRecordImport';
 import { fetchReasoningGraph, fetchSessionCapabilities } from './api/client';
 import type { ReasoningGraph, SessionCapabilities } from './api/client';
@@ -133,7 +133,7 @@ function App() {
           {requestedTraceId && graphLoading && <p className="py-8 text-sm text-muted">Loading your decision...</p>}
           {requestedTraceId && graphError && <div role="alert" className="mt-6 border border-rose-200 bg-rose-50 px-3 py-3 text-sm text-rose-700">{graphError}</div>}
           {requestedTraceId && !graphLoading && !graphError && !graph && <p className="py-8 text-sm text-muted">No decision was selected.</p>}
-          {requestedTraceId && !graphLoading && graph && <ReasoningGraphView graph={graph} showDecisionReview />}
+          {requestedTraceId && !graphLoading && graph && <SubjectPositionView graph={graph} />}
         </div>
       </main>
     );

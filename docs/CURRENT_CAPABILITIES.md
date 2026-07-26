@@ -27,8 +27,10 @@ import the CSV into institutional records or write back to any external system.
 
 People governed by a decision can view an approved public policy guide, open a
 human-assistance request where enabled, and request a review of their own
-decision trace. Those workflows do not change the original evidence, facts, or
-policy release.
+decision trace. Their trace view presents the current policy position, the
+conditions and facts that produced it, the policy release used, whether human
+consideration is required, and the available review route. Those workflows do
+not change the original evidence, facts, or policy release.
 
 ## What each account can see
 
@@ -40,7 +42,7 @@ role, tenant, domain, and subject-ownership check.
 
 | Account role | Visible workspace pages | Actions it may take |
 | --- | --- | --- |
-| Subject | Public policy guide; their own trace link | View their own trace; request assistance or a review where the institution enabled it. |
+| Subject | Public policy guide; their own personal policy-position view | View how the common approved policy applies to their own authorised trace; request assistance or a review where the institution enabled it. |
 | Metadata steward | Governance Desk | Apply only pre-configured low-risk metadata edits in assigned domains. |
 | Assistance coordinator | Assistance Inbox; Review Cases | Triage assistance and decision-review case statuses in assigned domains. |
 | Policy author | Handbook Intake; System Records; Policy Register | Upload/review source material, submit mapping configurations, record policy ambiguities, and use the draft API. Cannot approve releases. |

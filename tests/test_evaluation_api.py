@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.api import app
 from app.core.compiler import compile_release_to_graph
-from app.core.models import Release
+from app.core.models import ReasoningGraph, Release
 from app.infrastructure.database import get_db_session
 from app.infrastructure.db import Base
 from app.infrastructure.repositories import ReleaseRepository
@@ -112,6 +112,29 @@ def test_evaluation_persists_tenant_scoped_claims_and_facts(tmp_path, monkeypatc
         claims = client.get("/api/v1/claims", params={"graph_id": graph_id})
         facts = client.get("/api/v1/facts", params={"graph_id": graph_id})
         reasoning = client.get(f"/api/v1/reasoning/{graph_id}")
+
+        def incomplete_trace(context, graph, facts):
+            return ReasoningGraph(
+                id="trace_incomplete",
+                subject_id=context.subject_id,
+                rule_graph_id=graph.id,
+                evaluation_context=context,
+            )
+
+        monkeypatch.setattr("app.api.generate_reasoning_graph", incomplete_trace)
+        incomplete_evaluation = client.post(
+            "/api/v1/evaluate",
+            headers={"Idempotency-Key": "evaluation-incomplete-trace-test-key"},
+            json={
+                "rule_graph_id": rule_graph.id,
+                "evidence_id": evidence_id,
+                "subject_id": "subject_1",
+                "domain_id": "dom_curr_2026",
+                "release_version": "2026.1",
+                "as_of_date": "2026-06-01",
+                "applicability_context": {"entry_year": "2026"},
+            },
+        )
         app.dependency_overrides[get_current_user] = lambda: UserIdentity(
             tenant_id="tenant_demo_uni",
             role=Role.SUBJECT,
@@ -143,4 +166,6 @@ def test_evaluation_persists_tenant_scoped_claims_and_facts(tmp_path, monkeypatc
     assert facts.json()["items"][0]["supporting_claims"] == [claims.json()["items"][0]["id"]]
     assert reasoning.json()["evaluation_context"]["policy_as_of_date"] == "2026-06-01"
     assert reasoning.json()["evaluation_context"]["policy_context"] == {"entry_year": "2026"}
+    assert incomplete_evaluation.status_code == 500
+    assert incomplete_evaluation.json()["detail"] == "Evaluation did not produce a complete reasoning trace."
     assert cross_subject_ingestion.status_code == 403
