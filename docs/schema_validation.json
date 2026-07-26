@@ -1,0 +1,50 @@
+{
+    "validation_thesis": "Can the generic PolicyRule schema support both a curriculum credit requirement and a grant budget threshold without changing shape?",
+    
+    "schema_definition_under_test": {
+        "id": "string",
+        "type": "string",
+        "target": "string",
+        "condition": "string",
+        "value": "any",
+        "source_citation": "string"
+    },
+
+    "curriculum_rule_example": {
+        "id": "rule_hum_min_credits",
+        "type": "minimum_threshold",
+        "target": "academic.total_nqf_credits",
+        "condition": ">=",
+        "value": 360,
+        "source_citation": "UCT Humanities Handbook 2026, Section 4.1"
+    },
+    
+    "grant_rule_example": {
+        "id": "rule_ford_max_budget",
+        "type": "maximum_threshold",
+        "target": "financial.requested_budget_usd",
+        "condition": "<=",
+        "value": 50000,
+        "source_citation": "Ford Foundation Global South Grant Guidelines 2024, Page 3"
+    },
+
+    "grant_rule_qualitative_example": {
+        "id": "rule_ford_ngo_status",
+        "type": "required_status",
+        "target": "organization.registration_type",
+        "condition": "==",
+        "value": "501c3_or_equivalent",
+        "source_citation": "Ford Foundation Eligibility Checklist, Item 1"
+    },
+
+    "curriculum_rule_qualitative_example": {
+        "id": "rule_req_major",
+        "type": "required_item",
+        "target": "academic.completed_majors",
+        "condition": "includes",
+        "value": "Sociology",
+        "source_citation": "BA Sociology Major Rules, 2026"
+    },
+
+    "conclusion": "Yes, the abstraction holds. The separation of `target` (the schema key defined by the domain) from `condition` and `value` ensures the engine evaluates the math/logic perfectly without caring if it's evaluating dollars or credits, NGO status or Major selection."
+}

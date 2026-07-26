@@ -1,0 +1,21 @@
+# Disposable local PostgreSQL target for the destructive RLS rehearsal only.
+# It intentionally does not share the normal development database or volume.
+services:
+  postgres-rls:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: ire_rls_rehearsal
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_rls_rehearsal_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ire_rls_rehearsal"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+volumes:
+  postgres_rls_rehearsal_data:

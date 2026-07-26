@@ -1,0 +1,38 @@
+{
+    "id": "rel_grant_2024_v2",
+    "domain_id": "dom_grant_2024",
+    "version": "2.0.0",
+    "digital_signature": "sha256-mock-signature-8f92a",
+    "rule_graph_id": "will_be_compiled_at_runtime",
+    "root": {
+        "id": "exp_root_grant",
+        "label": "Global South Grant Eligibility 2024",
+        "operator": "AND",
+        "children": [
+            {
+                "id": "exp_budget_limit",
+                "label": "Maximum Budget Rule",
+                "target": "financial.requested_budget_usd",
+                "condition": "<=",
+                "value": 50000,
+                "source_citation": "Grant Guidelines 2024, Page 3."
+            },
+            {
+                "id": "exp_ngo_status",
+                "label": "NGO Registration Check",
+                "target": "organization.registration_type",
+                "condition": "==",
+                "value": "registered_ngo",
+                "source_citation": "Eligibility Checklist, Item 1."
+            },
+            {
+                "id": "exp_audit_rule",
+                "label": "Recent Audit Verification",
+                "target": "financial.has_recent_audit",
+                "condition": "==",
+                "value": true,
+                "source_citation": "Financial Governance Policy v2."
+            }
+        ]
+    }
+}

@@ -1,0 +1,81 @@
+{
+    "id": "dom_curr_2026",
+    "tenant_id": "tenant_demo_uni",
+    "name": "Undergraduate Curriculum 2026",
+    "schema_definition": {
+        "type": "object",
+        "properties": {
+            "academic": {
+                "type": "object",
+                "properties": {
+                    "total_nqf_credits": {"type": "number"},
+                    "completed_majors": {
+                        "type": "array",
+                        "items": {"type": "string"}
+                    },
+                    "gpa": {"type": "number"}
+                }
+            },
+            "status": {
+                "type": "object",
+                "properties": {
+                    "has_disciplinary_hold": {"type": "boolean"}
+                }
+            }
+        }
+    },
+    "governance": {
+        "metadata_quick_edits": [
+            {
+                "target_type": "course",
+                "label": "Course",
+                "identifier_label": "Course code",
+                "fields": [
+                    {
+                        "name": "course_name",
+                        "label": "Course name",
+                        "risk": "low",
+                        "notes": "Display metadata only; does not alter rule evaluation."
+                    },
+                    {
+                        "name": "course_description",
+                        "label": "Course description",
+                        "risk": "low",
+                        "notes": "Narrative metadata only; cite the current institutional source."
+                    },
+                    {
+                        "name": "offering",
+                        "label": "Offering pattern",
+                        "risk": "low",
+                        "notes": "Published availability metadata, not an eligibility rule."
+                    },
+                    {
+                        "name": "department_contact",
+                        "label": "Department contact",
+                        "risk": "low",
+                        "notes": "Administrative routing metadata."
+                    },
+                    {
+                        "name": "handbook_page",
+                        "label": "Handbook page reference",
+                        "risk": "low",
+                        "notes": "Citation correction only; the underlying rule remains unchanged."
+                    }
+                ]
+            }
+        ],
+        "review_required_changes": [
+            "Prerequisites and corequisites",
+            "Credit values",
+            "Programme requirements",
+            "Pathway requirements"
+        ],
+        "formal_governance_changes": [
+            "Graduation requirements",
+            "Progression rules",
+            "Faculty structures",
+            "Cohort rules",
+            "Full handbook releases"
+        ]
+    }
+}

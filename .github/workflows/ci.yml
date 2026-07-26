@@ -1,0 +1,111 @@
+name: Institutional Reasoning Engine CI
+
+on:
+  push:
+    branches: [ "main", "feat/*" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  backend-checks:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+        cache: "pip"
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        
+    - name: Banned Words Check (Domain Leakage)
+      run: ./tools/banned_words_check.sh
+      
+    - name: Type checking with MyPy
+      run: python -m mypy --explicit-package-bases app tests
+
+    - name: Verify Alembic migrations from a fresh database
+      run: DATABASE_URL="sqlite+aiosqlite:///${RUNNER_TEMP}/ire-migration-check.db" python -m alembic upgrade head
+      
+    - name: Run Pytest
+      run: python -m pytest tests/ -q
+
+  frontend-checks:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./frontend
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: 20
+        cache: 'npm'
+        cache-dependency-path: './frontend/package-lock.json'
+        
+    - name: Install dependencies
+      run: npm ci
+      
+    - name: Lint
+      run: npm run lint
+
+    - name: Type checking and Build
+      run: npm run build
+      
+    - name: Install Playwright Browsers
+      run: npx playwright install --with-deps
+      
+    - name: Run Playwright tests
+      run: npm run test:e2e
+      
+    - uses: actions/upload-artifact@v4
+      if: ${{ !cancelled() }}
+      with:
+        name: playwright-report
+        path: frontend/playwright-report/
+        retention-days: 14
+
+  postgres-rls-rehearsal:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ire_rls_rehearsal
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d ire_rls_rehearsal"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      IRE_RLS_ALLOW_DESTRUCTIVE_REHEARSAL: confirmed
+      IRE_RLS_BOOTSTRAP_URL: postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/ire_rls_rehearsal
+      IRE_RLS_MIGRATOR_URL: postgresql+asyncpg://ire_migrator_rehearsal:migrator-rehearsal-password@127.0.0.1:5432/ire_rls_rehearsal
+      IRE_RLS_APP_URL: postgresql+asyncpg://ire_app_rehearsal:app-rehearsal-password@127.0.0.1:5432/ire_rls_rehearsal
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+        cache: "pip"
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Rehearse PostgreSQL tenant isolation
+      run: python -m pytest tests/integration/test_postgres_rls.py -q

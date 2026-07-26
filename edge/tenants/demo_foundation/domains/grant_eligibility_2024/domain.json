@@ -1,0 +1,70 @@
+{
+    "id": "dom_grant_2024",
+    "tenant_id": "tenant_demo_foundation",
+    "name": "Global South Grant Eligibility 2024",
+    "schema_definition": {
+        "type": "object",
+        "properties": {
+            "organization": {
+                "type": "object",
+                "properties": {
+                    "registration_type": {"type": "string"},
+                    "years_in_operation": {"type": "number"}
+                }
+            },
+            "financial": {
+                "type": "object",
+                "properties": {
+                    "requested_budget_usd": {"type": "number"},
+                    "has_recent_audit": {"type": "boolean"}
+                }
+            }
+        }
+    },
+    "governance": {
+        "metadata_quick_edits": [
+            {
+                "target_type": "programme",
+                "label": "Grant programme",
+                "identifier_label": "Programme ID",
+                "fields": [
+                    {
+                        "name": "display_name",
+                        "label": "Public name",
+                        "risk": "low",
+                        "notes": "Display metadata only; does not alter eligibility."
+                    },
+                    {
+                        "name": "public_description",
+                        "label": "Public description",
+                        "risk": "low",
+                        "notes": "Narrative metadata only."
+                    },
+                    {
+                        "name": "contact_channel",
+                        "label": "Contact channel",
+                        "risk": "low",
+                        "notes": "Administrative routing metadata."
+                    },
+                    {
+                        "name": "guidance_reference",
+                        "label": "Guidance reference",
+                        "risk": "low",
+                        "notes": "Citation correction only; the underlying rule remains unchanged."
+                    }
+                ]
+            }
+        ],
+        "review_required_changes": [
+            "Evidence requirements",
+            "Eligibility conditions",
+            "Award limits"
+        ],
+        "formal_governance_changes": [
+            "Scoring models",
+            "Conflict resolution policy",
+            "Decision authority",
+            "Full guideline releases"
+        ]
+    }
+}

@@ -1,0 +1,38 @@
+{
+    "id": "rel_curr_2026_v2",
+    "domain_id": "dom_curr_2026",
+    "version": "2.0.0",
+    "digital_signature": "sha256-mock-signature-1a2b3c",
+    "rule_graph_id": "will_be_compiled_at_runtime",
+    "root": {
+        "id": "exp_root_curr",
+        "label": "Undergraduate Curriculum 2026 Requirements",
+        "operator": "AND",
+        "children": [
+            {
+                "id": "exp_min_credits",
+                "label": "Minimum NQF Credits",
+                "target": "academic.total_nqf_credits",
+                "condition": ">=",
+                "value": 360,
+                "source_citation": "UCT Humanities Handbook 2026, Section 4.1."
+            },
+            {
+                "id": "exp_major",
+                "label": "Primary Major Requirement",
+                "target": "academic.completed_majors",
+                "condition": "includes",
+                "value": "Computer Science",
+                "source_citation": "BSc Programme Requirements 2026."
+            },
+            {
+                "id": "exp_holds",
+                "label": "Disciplinary Clearance",
+                "target": "status.has_disciplinary_hold",
+                "condition": "==",
+                "value": false,
+                "source_citation": "General Rules for Degrees G.12."
+            }
+        ]
+    }
+}
