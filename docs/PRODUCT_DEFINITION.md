@@ -37,19 +37,19 @@ Opacity is the mechanism; legibility is the intervention.
 Current decision path:
 
 Evidence + signed policy release
-  -> extraction
-  -> claims
-  -> conflict resolution
-  -> accepted facts
+  -> cited candidate fact proposal
+  -> independent acceptance or rejection
+  -> accepted facts bound to the preserved evidence hash
   -> deterministic RuleGraph evaluation
   -> ReasoningGraph
   -> decision
   -> citation-bound explanation
 ```
 
-Automated extraction is treated as untrusted source assistance. Policy logic,
-evaluation, and the explanation bound to an evaluation trace are deterministic;
-no model resolves policy logic or determines an outcome.
+Automated extraction is treated as untrusted source assistance. It may propose
+candidate facts for staff review, but it cannot populate evaluation facts. Policy
+logic, evaluation, and the explanation bound to an evaluation trace are
+deterministic; no model resolves policy logic or determines an outcome.
 
 Certified institutional context is currently retained alongside this path as
 temporal explanation. The target path may consume a named context type only
@@ -63,7 +63,8 @@ The actual API path has demonstrated:
 - rejection when that author attempted to approve the same draft;
 - approval by a different identity;
 - compilation and cryptographic signing of the resulting release;
-- evaluation against that release;
+- evaluation against that release only after independently accepted cited facts;
+- source-hash re-verification and replay verification of a saved decision;
 - the same evaluator operating across curriculum and grant domains.
 - an independently certified shadow-calibration suite compared with a signed
   release, recording both matches and a classified mismatch without changing an
@@ -85,6 +86,7 @@ The prototype has not yet been validated against a real institution's complete,
 messy policy corpus. In particular:
 
 - extraction has not been verified against long, contradictory source material;
+- an extraction-to-candidate-fact review interface has not been delivered;
 - source authority and supersession rules have not been tested in a live policy
   environment;
 - administrators have not used the system without reading JSON;

@@ -32,6 +32,8 @@ from app.infrastructure.repositories import (
     DecisionReviewUnavailableError,
     DraftReleaseConflictError,
     EvidenceRepository,
+    EvidenceFactProposalConflictError,
+    EvidenceFactProposalRepository,
     HandbookRepository,
     HandbookUploadConflictError,
     InstitutionalInputConflictError,
@@ -67,11 +69,17 @@ from app.adapters.system_record_import import (
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from app.core.crypto import CryptoService
-from app.infrastructure.idempotency import verify_idempotency_key, check_idempotency_cache, set_idempotency_cache, acquire_idempotency_lock, release_idempotency_lock
+from app.infrastructure.idempotency import (
+    acquire_idempotency_lock,
+    check_idempotency_cache,
+    release_idempotency_lock,
+    scoped_idempotency_key,
+    set_idempotency_cache,
+    verify_idempotency_key,
+)
 from app.infrastructure.blob_storage import BlobStorage
-from app.core.extractor import EvidenceExtractor
-from app.core.conflict import resolve_claims_to_facts
 from app.core.explainer import format_explanation
+from app.core.replay import verify_replay
 from app.infrastructure.edge_registry import (
     DomainConfigurationError,
     EdgeRegistry,
@@ -103,6 +111,11 @@ from app.services.shadow_calibration import (
 from app.services.institutional_timeline import (
     InstitutionalContextAttestationRequest,
     InstitutionalContextEventInput,
+)
+from app.services.evidence_review import (
+    EvidenceFactProposalAttestationRequest,
+    EvidenceFactProposalInput,
+    validate_fact_value,
 )
 from app.sdk.pilot_rehearsal import run_pilot_rehearsal
 from app.services.ocr_provider import is_configured as ocr_provider_is_configured
@@ -147,6 +160,16 @@ def system_record_import_max_bytes() -> int:
     except ValueError:
         return 20_000_000
     return min(max(value, 1_024), 200_000_000)
+
+
+def reference_evidence_max_bytes() -> int:
+    """Keep the text-reference adapter bounded; large source files use governed intake."""
+    configured = os.environ.get("REFERENCE_EVIDENCE_MAX_BYTES", "250000")
+    try:
+        value = int(configured)
+    except ValueError:
+        return 250_000
+    return min(max(value, 1_024), 1_000_000)
 
 
 async def validated_system_record_import_contract(
@@ -238,7 +261,7 @@ async def health_ready(db: AsyncSession = Depends(get_db_session)) -> dict[str, 
 class EvidenceIngestionRequest(BaseModel):
     domain_id: str = Field(min_length=1)
     subject_id: str
-    content: str
+    content: str = Field(min_length=1, max_length=1_000_000)
     
 class EvaluateRequest(BaseModel):
     rule_graph_id: str
@@ -612,6 +635,11 @@ async def ingest_evidence(
     """
     ensure_domain_access(user, request.domain_id)
     ensure_subject_access(user, request.subject_id)
+    if len(request.content.encode("utf-8")) > reference_evidence_max_bytes():
+        raise HTTPException(
+            status_code=413,
+            detail="Reference evidence exceeds the configured size limit. Use the governed source intake workflow for large documents.",
+        )
     adapter = RawTextAdapter()
     try:
         evidence = await adapter.ingest(
@@ -636,6 +664,144 @@ async def ingest_evidence(
             detail="Evidence ingestion is temporarily unavailable.",
         ) from exc
 
+
+@app.post("/api/v1/governance/evidence-fact-proposals", status_code=201)
+async def create_evidence_fact_proposal(
+    request: EvidenceFactProposalInput,
+    user: UserIdentity = Depends(require_role([
+        Role.TENANT_ADMIN,
+        Role.INSTITUTIONAL_RECORDS_STEWARD,
+    ])),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Record a cited candidate fact; it cannot affect a decision until another person accepts it."""
+    ensure_domain_access(user, request.domain_id)
+    evidence_repo = EvidenceRepository(db)
+    stored_evidence = await evidence_repo.get_evidence(request.evidence_id, tenant_id=user.tenant_id)
+    if stored_evidence is None:
+        raise HTTPException(status_code=404, detail="Evidence was not found.")
+    if stored_evidence.domain_id != request.domain_id:
+        raise HTTPException(status_code=409, detail="Evidence belongs to a different decision domain.")
+    if not stored_evidence.evidence.storage_key:
+        raise HTTPException(status_code=409, detail="Evidence has no preserved source object.")
+    try:
+        await BlobStorage.verify_sha256(
+            stored_evidence.evidence.storage_key,
+            stored_evidence.evidence.cryptographic_hash,
+        )
+    except (RuntimeError, ValueError) as exc:
+        Telemetry.log_error(exc, {"stage": "evidence_fact_proposal_integrity"})
+        raise HTTPException(
+            status_code=409,
+            detail="The preserved evidence failed integrity verification and cannot be used.",
+        ) from exc
+
+    declared_fields = await InstitutionalInputRepository(db).list_domain_fact_fields(
+        tenant_id=user.tenant_id,
+        domain_id=request.domain_id,
+    )
+    if declared_fields is None:
+        raise HTTPException(status_code=404, detail="Decision domain was not found.")
+    field_types = {field["target_path"]: field["schema_type"] for field in declared_fields}
+    schema_type = field_types.get(request.target_path)
+    if schema_type is None:
+        raise HTTPException(
+            status_code=422,
+            detail="The proposed fact is not declared in this decision domain's approved schema.",
+        )
+    try:
+        asserted_value = validate_fact_value(request.asserted_value, schema_type)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    proposal = await EvidenceFactProposalRepository(db).create(
+        tenant_id=user.tenant_id,
+        domain_id=request.domain_id,
+        evidence=stored_evidence.evidence,
+        target_path=request.target_path,
+        asserted_value=asserted_value,
+        source_quote=request.source_quote,
+        source_locator=request.source_locator,
+        proposed_by=user.user_id,
+    )
+    return proposal
+
+
+@app.get("/api/v1/governance/evidence-fact-proposals")
+async def list_evidence_fact_proposals(
+    domain_id: str = Query(min_length=1, max_length=160),
+    evidence_id: str = Query(min_length=1, max_length=160),
+    user: UserIdentity = Depends(require_role([
+        Role.TENANT_ADMIN,
+        Role.INSTITUTIONAL_RECORDS_STEWARD,
+        Role.POLICY_OWNER,
+        Role.AUDITOR,
+    ])),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Expose fact-review history to its authorised staff, never to the public client."""
+    ensure_domain_access(user, domain_id)
+    evidence = await EvidenceRepository(db).get_evidence(evidence_id, tenant_id=user.tenant_id)
+    if evidence is None:
+        raise HTTPException(status_code=404, detail="Evidence was not found.")
+    if evidence.domain_id != domain_id:
+        raise HTTPException(status_code=409, detail="Evidence belongs to a different decision domain.")
+    return {
+        "items": await EvidenceFactProposalRepository(db).list_for_evidence(
+            tenant_id=user.tenant_id,
+            domain_id=domain_id,
+            evidence_id=evidence_id,
+        )
+    }
+
+
+@app.get("/api/v1/governance/evidence")
+async def list_subject_evidence_for_fact_review(
+    domain_id: str = Query(min_length=1, max_length=160),
+    subject_id: str = Query(min_length=1, max_length=160),
+    user: UserIdentity = Depends(require_role([
+        Role.TENANT_ADMIN,
+        Role.INSTITUTIONAL_RECORDS_STEWARD,
+        Role.POLICY_OWNER,
+        Role.AUDITOR,
+    ])),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """List source identifiers for governed fact review without exposing source bytes."""
+    ensure_domain_access(user, domain_id)
+    return {
+        "items": await EvidenceRepository(db).list_for_subject(
+            tenant_id=user.tenant_id,
+            domain_id=domain_id,
+            subject_id=subject_id,
+        )
+    }
+
+
+@app.post("/api/v1/governance/evidence-fact-proposals/{proposal_id}/attest")
+async def attest_evidence_fact_proposal(
+    proposal_id: str,
+    request: EvidenceFactProposalAttestationRequest,
+    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.POLICY_OWNER])),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Independently accept or reject a fact; accepting one's own proposal is forbidden."""
+    ensure_domain_access(user, request.domain_id)
+    try:
+        proposal = await EvidenceFactProposalRepository(db).attest(
+            proposal_id=proposal_id,
+            tenant_id=user.tenant_id,
+            domain_id=request.domain_id,
+            reviewer_id=user.user_id,
+            action=request.action,
+            note=request.note,
+        )
+    except EvidenceFactProposalConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if proposal is None:
+        raise HTTPException(status_code=404, detail="Evidence fact proposal was not found.")
+    return proposal
+
 @app.post("/api/v1/evaluate", status_code=202)
 async def start_evaluation(
     request: EvaluateRequest,
@@ -647,13 +813,26 @@ async def start_evaluation(
     Kicks off an evaluation of evidence against a specific rule graph.
     Protected by atomic SET NX idempotency lock.
     """
+    # Establish request scope before cache access. A reused client key must
+    # never become a cross-tenant, cross-subject, or cross-request cache key.
+    ensure_domain_access(user, request.domain_id)
+    ensure_subject_access(user, request.subject_id)
+    cache_key = scoped_idempotency_key(
+        operation="evaluate",
+        client_key=idemp_key,
+        tenant_id=user.tenant_id,
+        user_id=user.user_id,
+        subject_id=request.subject_id,
+        request_payload=request.model_dump(mode="json"),
+    )
+
     # 1. Check for cached response
-    cached_response = await check_idempotency_cache(idemp_key)
+    cached_response = await check_idempotency_cache(cache_key)
     if cached_response:
         return cached_response
         
     # 2. Acquire atomic SET NX lock
-    lock_acquired = await acquire_idempotency_lock(idemp_key)
+    lock_acquired = await acquire_idempotency_lock(cache_key)
     if not lock_acquired:
          raise HTTPException(status_code=409, detail="A request with this Idempotency-Key is already processing.")
          
@@ -661,9 +840,6 @@ async def start_evaluation(
         repo = ReleaseRepository(db)
         reasoning_repo = ReasoningRepository(db)
         evidence_repo = EvidenceRepository(db)
-
-        ensure_domain_access(user, request.domain_id)
-        ensure_subject_access(user, request.subject_id)
 
         release = await repo.get_release(request.domain_id, request.release_version)
         if not release:
@@ -758,18 +934,34 @@ async def start_evaluation(
             )
         ensure_subject_access(user, stored_evidence.evidence.subject_id)
              
-        # Fetch the stream representing the evidence.
+        # Verify the bytes before decision time. The database hash is not merely
+        # an audit annotation; an altered source must fail closed.
         evidence = stored_evidence.evidence
         if not evidence.storage_key:
             raise HTTPException(status_code=404, detail="Evidence not found or missing storage key.")
-        stream = BlobStorage.get_stream(evidence.storage_key)
+        try:
+            await BlobStorage.verify_sha256(evidence.storage_key, evidence.cryptographic_hash)
+        except (RuntimeError, ValueError) as exc:
+            Telemetry.log_error(exc, {"stage": "evaluation_evidence_integrity"})
+            raise HTTPException(
+                status_code=409,
+                detail="The preserved evidence failed integrity verification and cannot be evaluated.",
+            ) from exc
 
-        # Extract Claims
-        extractor = EvidenceExtractor(evidence_id=evidence.id)
-        claims = await extractor.extract_claims_from_stream(stream)
-
-        # Resolve Facts
-        facts = resolve_claims_to_facts(claims)
+        # Raw text, OCR, and LLM extraction can assist staff, but none can
+        # directly change an institutional result. Only independently accepted
+        # facts bound to this evidence hash are deterministic evaluation input.
+        claims, facts = await EvidenceFactProposalRepository(db).accepted_claims_and_facts(
+            tenant_id=user.tenant_id,
+            domain_id=request.domain_id,
+            evidence_id=evidence.id,
+            evidence_sha256=evidence.cryptographic_hash,
+        )
+        if not facts:
+            raise HTTPException(
+                status_code=409,
+                detail="Evaluation requires independently accepted facts for the preserved evidence.",
+            )
         
         # Execute Engine
         reasoning_graph = generate_reasoning_graph(context, rule_graph, facts)
@@ -817,12 +1009,12 @@ async def start_evaluation(
         response_data = summary.model_dump()
         
         # Save final response to idempotency cache
-        await set_idempotency_cache(idemp_key, response_data)
+        await set_idempotency_cache(cache_key, response_data)
         
         return response_data
     finally:
         # Release the lock so future retries hit the cache check rather than conflict
-        await release_idempotency_lock(idemp_key)
+        await release_idempotency_lock(cache_key)
 
 @app.get("/api/v1/reasoning/{graph_id}")
 async def get_reasoning_graph(
@@ -1010,6 +1202,28 @@ async def list_record_import_fields(
 ):
     """Returns only schema-approved, labelled destinations for a CSV mapping."""
 
+    ensure_domain_access(user, domain_id)
+    fields = await InstitutionalInputRepository(db).list_domain_fact_fields(
+        tenant_id=user.tenant_id,
+        domain_id=domain_id,
+    )
+    if fields is None:
+        raise HTTPException(status_code=404, detail="Decision domain was not found.")
+    return {"items": fields}
+
+
+@app.get("/api/v1/admin/domains/{domain_id}/fact-fields")
+async def list_fact_review_fields(
+    domain_id: str,
+    user: UserIdentity = Depends(require_role([
+        Role.TENANT_ADMIN,
+        Role.INSTITUTIONAL_RECORDS_STEWARD,
+        Role.POLICY_OWNER,
+        Role.AUDITOR,
+    ])),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Returns only institution-declared fact fields for reviewed evidence entry."""
     ensure_domain_access(user, domain_id)
     fields = await InstitutionalInputRepository(db).list_domain_fact_fields(
         tenant_id=user.tenant_id,
@@ -2504,20 +2718,65 @@ async def replay_evaluation(
     user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.AUDITOR])),
     db: AsyncSession = Depends(get_db_session)
 ):
-    """
-    Gathers all data needed to replay an evaluation.
-    """
-    # For now, just return the reasoning graph so the e2e test can check it
-    repo = ReasoningRepository(db)
-    
-    payload = await repo.get_reasoning_graph(graph_id, tenant_id=user.tenant_id)
-    if not payload:
-         raise HTTPException(status_code=404, detail="Reasoning graph not found")
-    if not payload.evaluation_context:
+    """Recompute and verify a decision instead of merely returning its trace."""
+    reasoning_repo = ReasoningRepository(db)
+    artifacts = await reasoning_repo.get_evaluation_artifacts(graph_id, tenant_id=user.tenant_id)
+    if artifacts is None:
+        raise HTTPException(status_code=404, detail="Reasoning graph was not found or lacks replay artifacts.")
+    if artifacts.graph.evaluation_context is None:
         raise HTTPException(status_code=409, detail="Reasoning graph lacks replayable evaluation context.")
-    ensure_domain_access(user, payload.evaluation_context.domain_id)
-         
-    return payload.model_dump()
+    ensure_domain_access(user, artifacts.domain_id)
+
+    release_repo = ReleaseRepository(db)
+    release = await release_repo.get_release_by_id(artifacts.release_id)
+    if release is None or release.domain_id != artifacts.domain_id:
+        raise HTTPException(status_code=409, detail="The stored release binding cannot be verified.")
+    rule_graph = await release_repo.get_compiled_rule_graph(artifacts.graph.rule_graph_id)
+    if rule_graph is None or rule_graph.release_id != release.id:
+        raise HTTPException(status_code=409, detail="The stored compiled policy cannot be verified.")
+    try:
+        require_release_integrity_for_evaluation(release, rule_graph)
+    except ReleaseIntegrityError as exc:
+        raise HTTPException(status_code=409, detail="The stored release failed integrity verification.") from exc
+
+    evidence = await EvidenceRepository(db).get_evidence(artifacts.evidence_id, tenant_id=user.tenant_id)
+    if evidence is None or evidence.domain_id != artifacts.domain_id or not evidence.evidence.storage_key:
+        raise HTTPException(status_code=409, detail="The stored evidence binding cannot be verified.")
+    try:
+        await BlobStorage.verify_sha256(
+            evidence.evidence.storage_key,
+            evidence.evidence.cryptographic_hash,
+        )
+    except (RuntimeError, ValueError) as exc:
+        Telemetry.log_error(exc, {"stage": "replay_evidence_integrity"})
+        raise HTTPException(status_code=409, detail="The preserved evidence failed integrity verification.") from exc
+
+    accepted_claims, accepted_facts = await EvidenceFactProposalRepository(db).accepted_claims_and_facts(
+        tenant_id=user.tenant_id,
+        domain_id=artifacts.domain_id,
+        evidence_id=evidence.evidence.id,
+        evidence_sha256=evidence.evidence.cryptographic_hash,
+    )
+    verification = await verify_replay(
+        stored_graph=artifacts.graph,
+        rule_graph=rule_graph,
+        stored_claims=artifacts.claims,
+        stored_facts=artifacts.facts,
+        accepted_claims=accepted_claims,
+        accepted_facts=accepted_facts,
+        stored_decision=artifacts.overall_decision,
+        stored_confidence=artifacts.overall_confidence,
+    )
+    if verification.status != "VERIFIED":
+        raise HTTPException(status_code=409, detail=verification.reason)
+    return {
+        "status": verification.status,
+        "graph_id": graph_id,
+        "release_id": artifacts.release_id,
+        "evidence_id": artifacts.evidence_id,
+        "decision": verification.decision,
+        "overall_confidence": verification.overall_confidence,
+    }
 
 @app.get("/api/v1/claims")
 async def get_claims(

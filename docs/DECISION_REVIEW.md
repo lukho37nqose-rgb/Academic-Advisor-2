@@ -15,8 +15,9 @@ academic, disciplinary, or accommodation process.
   trace and may cite only evidence that belongs to that same subject and domain.
 - Submitting or resolving a case never changes the source evidence, accepted
   facts, signed release, policy, original decision, or original explanation.
-- A correction is assessed through a new evaluation and produces a new trace.
-  Both traces remain available for audit.
+- A correction can be assessed only through a new governed evidence record and
+  evaluation, producing a new trace. Both traces remain available for audit;
+  a first-class successor-fact workflow is not yet implemented.
 - A coordinator is restricted to assigned domains. A subject sees only their
   own cases. Tenant administrators retain monitored break-glass access.
 - Each action writes an append-only event with a sequence number and actor.

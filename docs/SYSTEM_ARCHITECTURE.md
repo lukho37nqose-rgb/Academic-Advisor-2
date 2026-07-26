@@ -15,18 +15,30 @@ limits of the evidence, policy model, and operational controls supplied.
 To preserve the integrity of appeals and audits, the protocol strictly models the progression from raw data to accepted truth.
 
 ### 2.1 Evidence
-* **Definition:** An immutable blob of data provided to the system. It may be an uploaded PDF, a JSON payload from an ERP system (e.g., PeopleSoft), or a user form submission.
-* **Constraint:** Evidence MUST be cryptographically hashed (SHA-256) at the exact moment of ingestion. It is never modified.
+* **Definition:** A preserved data object provided to the system. It may be an
+  uploaded PDF, a JSON payload from an ERP system (e.g., PeopleSoft), or a user
+  form submission.
+* **Constraint:** Evidence is SHA-256 hashed at ingestion and re-verified before
+  evaluation and replay. The serving database treats its evidence record as
+  append-only; deployment also requires object-store retention/versioning.
 
 ### 2.2 Claim
-* **Definition:** An assertion derived from a piece of Evidence by an Extractor (which may be a deterministic parser or a probabilistic LLM). 
+* **Definition:** A candidate assertion about a piece of evidence. It may be
+  recorded by an authorised staff member or proposed by a deterministic parser
+  or probabilistic LLM for staff review.
 * **Structure:** A Claim asserts that a specific `target_path` (e.g., `academic.gpa`) holds a specific `asserted_value` (e.g., `3.8`).
-* **Constraint:** Every Claim MUST carry an `extraction_confidence` score [0.0 - 1.0] and a `source_trust_level` score representing the inherent reliability of the Evidence type.
+* **Constraint:** An automated claim is proposal assistance only. It cannot
+  become a decision input until it is recorded against source provenance,
+  constrained to an approved schema field, and independently accepted.
 
 ### 2.3 Fact
-* **Definition:** A canonical truth established by the system.
-* **Mechanism:** The Conflict Engine evaluates all competing Claims for a given `target_path`. It weights them using weighted-confidence model based on confidence and trust levels to select a `resolved_value`.
-* **Constraint:** A Fact MUST maintain strict referential integrity, recording exactly which `supporting_claim_ids` it accepted and which `rejected_claim_ids` it discarded. Both claims and facts are retained against the tenant-scoped ReasoningGraph that used them.
+* **Definition:** A canonical decision input established by independent human
+  acceptance of a cited candidate fact.
+* **Mechanism:** One accepted proposal per evidence and target path is materialised
+  as a fact for evaluation. It cannot be overwritten. A governed successor-fact
+  workflow remains a required future capability for corrections.
+* **Constraint:** Facts retain their supporting claim, evidence hash, tenant,
+  domain, and reasoning trace lineage. They are append-only in PostgreSQL.
 
 ---
 
@@ -51,9 +63,12 @@ legible to the affected subject, but it MUST NOT create a subject-specific
 policy, alter the release, or represent a human-review trigger as a final
 institutional decision.
 
-### 3.3 WorkflowGraph (Post-Evaluation)
-* **Definition:** The event-driven actions triggered by the result of a ReasoningGraph.
-* **Mechanism:** If the `conclusion` node passes, specific actions (e.g., "Generate Letter", "Notify SIS") are placed into a job queue for asynchronous execution.
+### 3.3 External Workflow Boundary (Post-Evaluation)
+* **Definition:** A reserved integration boundary for any future action triggered
+  after a reasoning graph.
+* **Current constraint:** The runtime does not select, queue, simulate, or
+  deliver workflow actions. A transactional outbox and separate dispatcher are
+  required before any institutional write is enabled.
 
 ---
 

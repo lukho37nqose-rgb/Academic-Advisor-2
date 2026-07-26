@@ -223,6 +223,44 @@ export interface RecordImportField {
     schema_type: 'string' | 'number' | 'boolean';
 }
 
+export interface EvidenceSourceSummary {
+    evidence_id: string;
+    source_type: string;
+    captured_at?: string | null;
+    integrity_hash: string;
+}
+
+export type EvidenceFactProposalStatus = 'PENDING' | 'ACCEPTED' | 'REJECTED';
+
+export interface EvidenceFactProposal {
+    proposal_id: string;
+    domain_id: string;
+    evidence_id: string;
+    subject_id: string;
+    target_path: string;
+    asserted_value: string | number | boolean;
+    source_quote: string;
+    source_locator?: string | null;
+    proposal_origin: string;
+    evidence_sha256: string;
+    input_sha256: string;
+    status: EvidenceFactProposalStatus;
+    proposed_by: string;
+    reviewed_by?: string | null;
+    review_note?: string | null;
+    reviewed_at?: string | null;
+    created_at?: string | null;
+}
+
+export interface EvidenceFactProposalInput {
+    domain_id: string;
+    evidence_id: string;
+    target_path: string;
+    asserted_value: string | number | boolean;
+    source_quote: string;
+    source_locator?: string;
+}
+
 export type InstitutionalContextEventType =
     | 'CONCESSION'
     | 'CURRICULUM_APPLICABILITY'
@@ -673,6 +711,52 @@ export const fetchAdminDomains = async (): Promise<AdminDomain[]> => {
 export const fetchRecordImportFields = async (domainId: string): Promise<RecordImportField[]> => {
     const response = await apiClient.get<{ items: RecordImportField[] }>(`/admin/domains/${domainId}/record-import-fields`);
     return response.data.items;
+}
+
+export const fetchFactReviewFields = async (domainId: string): Promise<RecordImportField[]> => {
+    const response = await apiClient.get<{ items: RecordImportField[] }>(`/admin/domains/${domainId}/fact-fields`);
+    return response.data.items;
+}
+
+export const fetchEvidenceSources = async (
+    domainId: string,
+    subjectId: string,
+): Promise<EvidenceSourceSummary[]> => {
+    const response = await apiClient.get<{ items: EvidenceSourceSummary[] }>('/governance/evidence', {
+        params: { domain_id: domainId, subject_id: subjectId },
+    });
+    return response.data.items;
+}
+
+export const fetchEvidenceFactProposals = async (
+    domainId: string,
+    evidenceId: string,
+): Promise<EvidenceFactProposal[]> => {
+    const response = await apiClient.get<{ items: EvidenceFactProposal[] }>('/governance/evidence-fact-proposals', {
+        params: { domain_id: domainId, evidence_id: evidenceId },
+    });
+    return response.data.items;
+}
+
+export const createEvidenceFactProposal = async (
+    payload: EvidenceFactProposalInput,
+): Promise<EvidenceFactProposal> => {
+    const response = await apiClient.post<EvidenceFactProposal>('/governance/evidence-fact-proposals', payload);
+    return response.data;
+}
+
+export const attestEvidenceFactProposal = async (
+    proposalId: string,
+    domainId: string,
+    action: 'ACCEPT' | 'REJECT',
+    note: string,
+): Promise<EvidenceFactProposal> => {
+    const response = await apiClient.post<EvidenceFactProposal>(`/governance/evidence-fact-proposals/${proposalId}/attest`, {
+        domain_id: domainId,
+        action,
+        note,
+    });
+    return response.data;
 }
 
 export const fetchSubjectInstitutionalTimeline = async (): Promise<InstitutionalContextEvent[]> => {

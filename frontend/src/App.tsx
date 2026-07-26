@@ -5,6 +5,7 @@ import { GovernanceDesk } from './components/GovernanceDesk';
 import { HandbookIntake } from './components/HandbookIntake';
 import { InstitutionalIntake } from './components/InstitutionalIntake';
 import { InstitutionalTimeline } from './components/InstitutionalTimeline';
+import { EvidenceFactReview } from './components/EvidenceFactReview';
 import { PolicyAmbiguityRegister } from './components/PolicyAmbiguityRegister';
 import { PolicyReview } from './components/PolicyReview';
 import { PublicPolicyGuide } from './components/PublicPolicyGuide';
@@ -17,6 +18,7 @@ import type { ReasoningGraph, SessionCapabilities } from './api/client';
 import {
   Building2,
   ClipboardCheck,
+  FileCheck2,
   Files,
   Inbox,
   Landmark,
@@ -38,7 +40,8 @@ type ActiveView =
   | 'handbook_intake'
   | 'record_import'
   | 'shadow_calibration'
-  | 'institutional_timeline';
+  | 'institutional_timeline'
+  | 'evidence_facts';
 
 type NavigationItem = {
   view: ActiveView;
@@ -57,6 +60,7 @@ const navigationItems: NavigationItem[] = [
   { view: 'policy_ambiguities', label: 'Policy Register', icon: Scale },
   { view: 'shadow_calibration', label: 'Shadow Calibration', icon: TestTube2 },
   { view: 'institutional_timeline', label: 'Institutional Timeline', icon: Landmark },
+  { view: 'evidence_facts', label: 'Evidence Facts', icon: FileCheck2 },
 ];
 
 const viewHeading: Record<ActiveView, [string, string]> = {
@@ -70,6 +74,7 @@ const viewHeading: Record<ActiveView, [string, string]> = {
   record_import: ['System Records', 'CSV Preview'],
   shadow_calibration: ['Shadow Calibration', 'Non-operative Comparison'],
   institutional_timeline: ['Institutional Timeline', 'Context History'],
+  evidence_facts: ['Evidence Facts', 'Independent Review'],
 };
 
 function isActiveView(value: string): value is ActiveView {
@@ -165,6 +170,8 @@ function App() {
   const canResolveCalibrationMismatch = isTenantAdmin || capabilities.role === 'rule_approver' || capabilities.role === 'policy_owner';
   const canRecordInstitutionalContext = isTenantAdmin || capabilities.role === 'institutional_records_steward';
   const canAttestInstitutionalContext = isTenantAdmin || capabilities.role === 'policy_owner';
+  const canProposeEvidenceFact = isTenantAdmin || capabilities.role === 'institutional_records_steward';
+  const canAttestEvidenceFact = isTenantAdmin || capabilities.role === 'policy_owner';
 
   if (!activeView) {
     return <main className="min-h-screen bg-white px-4 py-8 sm:px-8"><div role="alert" className="mx-auto max-w-5xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">This account does not have access to an operational workspace.</div></main>;
@@ -211,6 +218,7 @@ function App() {
           {activeView === 'record_import' && <SystemRecordImport />}
           {activeView === 'shadow_calibration' && <ShadowCalibration canCreate={canCreateCalibration} canCertify={canCertifyCalibration} canResolveMismatch={canResolveCalibrationMismatch} />}
           {activeView === 'institutional_timeline' && <InstitutionalTimeline canRecord={canRecordInstitutionalContext} canAttest={canAttestInstitutionalContext} />}
+          {activeView === 'evidence_facts' && <EvidenceFactReview canPropose={canProposeEvidenceFact} canAttest={canAttestEvidenceFact} />}
         </div>
       </main>
     </div>

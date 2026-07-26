@@ -72,7 +72,7 @@ ROLE_PERMISSION_MATRIX: list[dict[str, Any]] = [
         "can_manage_assistance_requests": False,
         "can_manage_decision_reviews": False,
         "can_resolve_policy_ambiguities": False,
-        "scope": "Records existing subject-specific institutional decisions for independent certification; cannot create policy exceptions or certify their own records.",
+        "scope": "Records existing subject-specific institutional context and cited evidence-fact proposals for independent certification; cannot create policy exceptions or certify their own records.",
     },
     {
         "role": Role.ASSISTANCE_COORDINATOR.value,
@@ -108,7 +108,7 @@ ROLE_PERMISSION_MATRIX: list[dict[str, Any]] = [
         "can_manage_assistance_requests": False,
         "can_manage_decision_reviews": False,
         "can_resolve_policy_ambiguities": True,
-        "scope": "Settles documented policy interpretations with an authoritative source; cannot resolve their own ambiguity record.",
+        "scope": "Settles documented policy interpretations and independently reviews cited evidence facts with an authoritative source; cannot resolve or certify their own record.",
     },
     {
         "role": Role.RULE_APPROVER.value,

@@ -1,5 +1,6 @@
 import redis.asyncio as redis
 from fastapi import Header, HTTPException
+import hashlib
 import json
 import os
 import time
@@ -65,9 +66,44 @@ else:
     redis_client = MockRedis()
 
 async def verify_idempotency_key(idempotency_key: str = Header(None)) -> str:
-    if not idempotency_key:
+    if not idempotency_key or not idempotency_key.strip():
         raise HTTPException(status_code=400, detail="Idempotency-Key header is required for this operation.")
-    return idempotency_key
+    normalized = idempotency_key.strip()
+    if len(normalized) > 255:
+        raise HTTPException(status_code=400, detail="Idempotency-Key must be at most 255 characters.")
+    return normalized
+
+
+def scoped_idempotency_key(
+    *,
+    operation: str,
+    client_key: str,
+    tenant_id: str,
+    user_id: str,
+    subject_id: str | None,
+    request_payload: dict[str, Any],
+) -> str:
+    """Return an opaque, principal- and request-bound Redis key.
+
+    A client idempotency header is neither a tenant boundary nor a secret.  The
+    cache namespace therefore binds it to the authorised actor, the subject
+    scope, and canonical request content before any cached result is read.
+    """
+
+    canonical = json.dumps(
+        {
+            "operation": operation,
+            "client_key": client_key,
+            "tenant_id": tenant_id,
+            "user_id": user_id,
+            "subject_id": subject_id,
+            "request": request_payload,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 async def check_idempotency_cache(key: str) -> dict | None:
     """

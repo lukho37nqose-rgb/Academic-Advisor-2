@@ -10,7 +10,8 @@ from app.api import app
 from app.core.compiler import compile_release_to_graph
 from app.core.models import ReasoningGraph, Release
 from app.infrastructure.database import get_db_session
-from app.infrastructure.db import Base
+from app.infrastructure.db import Base, DBDomain, DBTenant
+from app.infrastructure.blob_storage import BlobStorage
 from app.infrastructure.repositories import ReleaseRepository
 from app.services.auth import Role, UserIdentity, get_current_user
 
@@ -21,7 +22,6 @@ async def _create_schema(engine) -> None:
 
 
 def test_evaluation_persists_tenant_scoped_claims_and_facts(tmp_path, monkeypatch):
-    monkeypatch.setenv("REASONING_ENGINE_AI_PROVIDER", "mock")
     database_path = tmp_path / "evaluation.db"
     engine = create_async_engine(f"sqlite+aiosqlite:///{database_path}")
     session_factory = async_sessionmaker(bind=engine, expire_on_commit=False)
@@ -31,7 +31,7 @@ def test_evaluation_persists_tenant_scoped_claims_and_facts(tmp_path, monkeypatc
         "root": {
             "id": "mock_claim_rule",
             "label": "Mock extracted claim is present",
-            "target": "mock.path",
+            "target": "facts.mock",
             "condition": "==",
             "value": "Extracted claim from evidence.",
             "source_citation": "Reference policy section 1",
@@ -41,6 +41,29 @@ def test_evaluation_persists_tenant_scoped_claims_and_facts(tmp_path, monkeypatc
 
     async def _store_release() -> None:
         async with session_factory() as session:
+            session.add(DBTenant(id="tenant_demo_uni", name="Demo University"))
+            session.add(
+                DBDomain(
+                    id="dom_curr_2026",
+                    tenant_id="tenant_demo_uni",
+                    name="Curriculum 2026",
+                    schema_definition={
+                        "type": "object",
+                        "properties": {
+                            "facts": {
+                                "type": "object",
+                                "properties": {
+                                    "mock": {
+                                        "type": "string",
+                                        "title": "Mock extracted claim",
+                                    }
+                                },
+                            }
+                        },
+                    },
+                )
+            )
+            await session.commit()
             await ReleaseRepository(session).create_release(
                 Release(
                     id="rel_eval",
@@ -83,6 +106,11 @@ def test_evaluation_persists_tenant_scoped_claims_and_facts(tmp_path, monkeypatc
             },
         )
         evidence_id = ingestion.json()["id"]
+        evidence_sources = client.get(
+            "/api/v1/governance/evidence",
+            params={"domain_id": "dom_curr_2026", "subject_id": "subject_1"},
+        )
+        fact_fields = client.get("/api/v1/admin/domains/dom_curr_2026/fact-fields")
         missing_date = client.post(
             "/api/v1/evaluate",
             headers={"Idempotency-Key": "evaluation-missing-date-test-key"},
@@ -95,6 +123,53 @@ def test_evaluation_persists_tenant_scoped_claims_and_facts(tmp_path, monkeypatc
                 "applicability_context": {"entry_year": "2026"},
             },
         )
+        unreviewed_evaluation = client.post(
+            "/api/v1/evaluate",
+            headers={"Idempotency-Key": "evaluation-unreviewed-facts-test-key"},
+            json={
+                "rule_graph_id": rule_graph.id,
+                "evidence_id": evidence_id,
+                "subject_id": "subject_1",
+                "domain_id": "dom_curr_2026",
+                "release_version": "2026.1",
+                "as_of_date": "2026-06-01",
+                "applicability_context": {"entry_year": "2026"},
+            },
+        )
+        proposal = client.post(
+            "/api/v1/governance/evidence-fact-proposals",
+            json={
+                "domain_id": "dom_curr_2026",
+                "evidence_id": evidence_id,
+                "target_path": "facts.mock",
+                "asserted_value": "Extracted claim from evidence.",
+                "source_quote": "Evidence used to exercise the deterministic evaluation path.",
+                "source_locator": "Reference evidence",
+            },
+        )
+        self_attestation = client.post(
+            f"/api/v1/governance/evidence-fact-proposals/{proposal.json()['proposal_id']}/attest",
+            json={
+                "domain_id": "dom_curr_2026",
+                "action": "ACCEPT",
+                "note": "This must be rejected because it is self-attestation.",
+            },
+        )
+        app.dependency_overrides[get_current_user] = lambda: UserIdentity(
+            tenant_id="tenant_demo_uni",
+            role=Role.POLICY_OWNER,
+            user_id="owner_1",
+            domain_ids=["dom_curr_2026"],
+        )
+        attestation = client.post(
+            f"/api/v1/governance/evidence-fact-proposals/{proposal.json()['proposal_id']}/attest",
+            json={
+                "domain_id": "dom_curr_2026",
+                "action": "ACCEPT",
+                "note": "The source quotation and declared field have been independently verified.",
+            },
+        )
+        app.dependency_overrides[get_current_user] = _tenant_admin
         evaluation = client.post(
             "/api/v1/evaluate",
             headers={"Idempotency-Key": "evaluation-api-test-key"},
@@ -112,6 +187,53 @@ def test_evaluation_persists_tenant_scoped_claims_and_facts(tmp_path, monkeypatc
         claims = client.get("/api/v1/claims", params={"graph_id": graph_id})
         facts = client.get("/api/v1/facts", params={"graph_id": graph_id})
         reasoning = client.get(f"/api/v1/reasoning/{graph_id}")
+        replay = client.get(f"/api/v1/replay/{graph_id}")
+        replacement_proposal = client.post(
+            "/api/v1/governance/evidence-fact-proposals",
+            json={
+                "domain_id": "dom_curr_2026",
+                "evidence_id": evidence_id,
+                "target_path": "facts.mock",
+                "asserted_value": "Different asserted value.",
+                "source_quote": "A later assertion that must not overwrite an accepted fact.",
+            },
+        )
+        app.dependency_overrides[get_current_user] = lambda: UserIdentity(
+            tenant_id="tenant_demo_uni",
+            role=Role.POLICY_OWNER,
+            user_id="owner_1",
+            domain_ids=["dom_curr_2026"],
+        )
+        duplicate_acceptance = client.post(
+            f"/api/v1/governance/evidence-fact-proposals/{replacement_proposal.json()['proposal_id']}/attest",
+            json={
+                "domain_id": "dom_curr_2026",
+                "action": "ACCEPT",
+                "note": "This target already has an independently accepted evidence fact.",
+            },
+        )
+        app.dependency_overrides[get_current_user] = _tenant_admin
+
+        app.dependency_overrides[get_current_user] = lambda: UserIdentity(
+            tenant_id="tenant_other",
+            role=Role.TENANT_ADMIN,
+            user_id="admin_other",
+            domain_ids=[],
+        )
+        cross_tenant_cached_evaluation = client.post(
+            "/api/v1/evaluate",
+            headers={"Idempotency-Key": "evaluation-api-test-key"},
+            json={
+                "rule_graph_id": rule_graph.id,
+                "evidence_id": evidence_id,
+                "subject_id": "subject_1",
+                "domain_id": "dom_curr_2026",
+                "release_version": "2026.1",
+                "as_of_date": "2026-06-01",
+                "applicability_context": {"entry_year": "2026"},
+            },
+        )
+        app.dependency_overrides[get_current_user] = _tenant_admin
 
         def incomplete_trace(context, graph, facts):
             return ReasoningGraph(
@@ -135,6 +257,21 @@ def test_evaluation_persists_tenant_scoped_claims_and_facts(tmp_path, monkeypatc
                 "applicability_context": {"entry_year": "2026"},
             },
         )
+        BlobStorage._store[ingestion.json()["storage_key"]] = b"tampered evidence bytes"
+        tampered_evaluation = client.post(
+            "/api/v1/evaluate",
+            headers={"Idempotency-Key": "evaluation-tampered-evidence-test-key"},
+            json={
+                "rule_graph_id": rule_graph.id,
+                "evidence_id": evidence_id,
+                "subject_id": "subject_1",
+                "domain_id": "dom_curr_2026",
+                "release_version": "2026.1",
+                "as_of_date": "2026-06-01",
+                "applicability_context": {"entry_year": "2026"},
+            },
+        )
+        tampered_replay = client.get(f"/api/v1/replay/{graph_id}")
         app.dependency_overrides[get_current_user] = lambda: UserIdentity(
             tenant_id="tenant_demo_uni",
             role=Role.SUBJECT,
@@ -156,16 +293,36 @@ def test_evaluation_persists_tenant_scoped_claims_and_facts(tmp_path, monkeypatc
 
     assert ingestion.status_code == 201
     assert ingestion.json()["storage_key"].startswith("tenants/tenant_demo_uni/evidence/")
+    assert evidence_sources.status_code == 200
+    assert evidence_sources.json()["items"][0]["evidence_id"] == evidence_id
+    assert fact_fields.status_code == 200
+    assert fact_fields.json()["items"] == [{"target_path": "facts.mock", "label": "Mock extracted claim", "schema_type": "string"}]
     assert missing_date.status_code == 422
     assert "as_of_date" in missing_date.json()["detail"]
+    assert unreviewed_evaluation.status_code == 409
+    assert "independently accepted facts" in unreviewed_evaluation.json()["detail"]
+    assert proposal.status_code == 201
+    assert self_attestation.status_code == 409
+    assert attestation.status_code == 200
+    assert attestation.json()["status"] == "ACCEPTED"
     assert evaluation.status_code == 202
     assert evaluation.json()["decision"] == "ELIGIBLE"
+    assert cross_tenant_cached_evaluation.status_code == 404
     assert claims.status_code == 200
     assert claims.json()["items"][0]["evidence_id"] == evidence_id
     assert facts.status_code == 200
     assert facts.json()["items"][0]["supporting_claims"] == [claims.json()["items"][0]["id"]]
     assert reasoning.json()["evaluation_context"]["policy_as_of_date"] == "2026-06-01"
     assert reasoning.json()["evaluation_context"]["policy_context"] == {"entry_year": "2026"}
+    assert replay.status_code == 200
+    assert replay.json()["status"] == "VERIFIED"
+    assert replay.json()["decision"] == "ELIGIBLE"
+    assert replacement_proposal.status_code == 201
+    assert duplicate_acceptance.status_code == 409
     assert incomplete_evaluation.status_code == 500
     assert incomplete_evaluation.json()["detail"] == "Evaluation did not produce a complete reasoning trace."
+    assert tampered_evaluation.status_code == 409
+    assert "integrity verification" in tampered_evaluation.json()["detail"]
+    assert tampered_replay.status_code == 409
+    assert "integrity verification" in tampered_replay.json()["detail"]
     assert cross_subject_ingestion.status_code == 403

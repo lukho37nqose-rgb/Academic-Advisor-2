@@ -47,6 +47,8 @@ from app.infrastructure.db import (
     DBDecisionReviewCaseEvent,
     DBInstitutionalContextEvent,
     DBInstitutionalContextEventAttestation,
+    DBEvidenceFactProposal,
+    DBEvidenceFactProposalEvent,
     DBSupportRequest,
     DBSupportRequestEvent,
     DBTenant,
@@ -79,6 +81,20 @@ class StoredEvidence:
     domain_id: str
 
 
+@dataclass(frozen=True)
+class StoredEvaluationArtifacts:
+    graph: ReasoningGraph
+    tenant_id: str
+    domain_id: str
+    subject_id: str
+    release_id: str
+    evidence_id: str
+    overall_decision: str
+    overall_confidence: float
+    claims: list[Claim]
+    facts: list[Fact]
+
+
 class QuickEditConflictError(ValueError):
     """Raised when an editor submits against a stale metadata value."""
 
@@ -101,6 +117,10 @@ class GovernancePublicationBusyError(ValueError):
 
 class DraftReleaseConflictError(ValueError):
     """Raised when a draft changed state before its release transaction commits."""
+
+
+class EvidenceFactProposalConflictError(ValueError):
+    """Raised when a proposed evidence fact violates its governed lifecycle."""
 
 
 async def acquire_domain_governance_lock(session: AsyncSession, domain_id: str) -> None:
@@ -3117,6 +3137,279 @@ class EvidenceRepository:
             domain_id=cast(str, db_ev.domain_id),
         )
 
+    async def list_for_subject(
+        self,
+        *,
+        tenant_id: str,
+        domain_id: str,
+        subject_id: str,
+    ) -> list[dict[str, Any]]:
+        """List evidence identifiers and metadata without returning source content."""
+        result = await self.session.execute(
+            select(DBEvidence)
+            .where(
+                DBEvidence.tenant_id == tenant_id,
+                DBEvidence.domain_id == domain_id,
+                DBEvidence.subject_id == subject_id,
+            )
+            .order_by(DBEvidence.timestamp.desc(), DBEvidence.id)
+        )
+        return [
+            {
+                "evidence_id": cast(str, evidence.id),
+                "source_type": cast(str, evidence.source_type),
+                "captured_at": evidence.timestamp.isoformat() if evidence.timestamp else None,
+                "integrity_hash": cast(str, evidence.cryptographic_hash),
+            }
+            for evidence in result.scalars().all()
+        ]
+
+
+class EvidenceFactProposalRepository:
+    """Persists independently reviewed facts without turning source extraction into evaluation."""
+
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    @staticmethod
+    def _payload(proposal: DBEvidenceFactProposal) -> dict[str, Any]:
+        return {
+            "proposal_id": cast(str, proposal.id),
+            "domain_id": cast(str, proposal.domain_id),
+            "evidence_id": cast(str, proposal.evidence_id),
+            "subject_id": cast(str, proposal.subject_id),
+            "target_path": cast(str, proposal.target_path),
+            "asserted_value": proposal.asserted_value,
+            "source_quote": cast(str, proposal.source_quote),
+            "source_locator": cast(Optional[str], proposal.source_locator),
+            "proposal_origin": cast(str, proposal.proposal_origin),
+            "evidence_sha256": cast(str, proposal.evidence_sha256),
+            "input_sha256": cast(str, proposal.input_sha256),
+            "status": cast(str, proposal.status),
+            "proposed_by": cast(str, proposal.proposed_by),
+            "reviewed_by": cast(Optional[str], proposal.reviewed_by),
+            "review_note": cast(Optional[str], proposal.review_note),
+            "reviewed_at": proposal.reviewed_at.isoformat() if proposal.reviewed_at else None,
+            "created_at": proposal.created_at.isoformat() if proposal.created_at else None,
+        }
+
+    async def create(
+        self,
+        *,
+        tenant_id: str,
+        domain_id: str,
+        evidence: Evidence,
+        target_path: str,
+        asserted_value: Any,
+        source_quote: str,
+        source_locator: Optional[str],
+        proposed_by: str,
+    ) -> dict[str, Any]:
+        canonical_input = json.dumps(
+            {
+                "tenant_id": tenant_id,
+                "domain_id": domain_id,
+                "evidence_id": evidence.id,
+                "evidence_sha256": evidence.cryptographic_hash,
+                "target_path": target_path,
+                "asserted_value": asserted_value,
+                "source_quote": source_quote,
+                "source_locator": source_locator,
+                "proposal_origin": "MANUAL",
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+        )
+        proposal = DBEvidenceFactProposal(
+            id="efp_" + uuid.uuid4().hex,
+            tenant_id=tenant_id,
+            domain_id=domain_id,
+            evidence_id=evidence.id,
+            subject_id=evidence.subject_id,
+            target_path=target_path,
+            asserted_value=asserted_value,
+            source_quote=source_quote,
+            source_locator=source_locator,
+            extraction_confidence=1.0,
+            source_trust_level=1.0,
+            proposal_origin="MANUAL",
+            evidence_sha256=evidence.cryptographic_hash,
+            input_sha256=hashlib.sha256(canonical_input.encode("utf-8")).hexdigest(),
+            proposed_by=proposed_by,
+            status="PENDING",
+        )
+        self.session.add(proposal)
+        self.session.add(
+            DBEvidenceFactProposalEvent(
+                id="efpe_" + uuid.uuid4().hex,
+                proposal_id=proposal.id,
+                tenant_id=tenant_id,
+                domain_id=domain_id,
+                sequence=1,
+                action="SUBMITTED",
+                actor_id=proposed_by,
+                note="Evidence fact proposal submitted.",
+            )
+        )
+        await self.session.commit()
+        return self._payload(proposal)
+
+    async def get(
+        self,
+        proposal_id: str,
+        *,
+        tenant_id: str,
+        domain_id: Optional[str] = None,
+    ) -> Optional[dict[str, Any]]:
+        query = select(DBEvidenceFactProposal).where(
+            DBEvidenceFactProposal.id == proposal_id,
+            DBEvidenceFactProposal.tenant_id == tenant_id,
+        )
+        if domain_id is not None:
+            query = query.where(DBEvidenceFactProposal.domain_id == domain_id)
+        proposal = (await self.session.execute(query)).scalar_one_or_none()
+        return self._payload(proposal) if proposal else None
+
+    async def list_for_evidence(
+        self,
+        *,
+        tenant_id: str,
+        domain_id: str,
+        evidence_id: str,
+    ) -> list[dict[str, Any]]:
+        result = await self.session.execute(
+            select(DBEvidenceFactProposal)
+            .where(
+                DBEvidenceFactProposal.tenant_id == tenant_id,
+                DBEvidenceFactProposal.domain_id == domain_id,
+                DBEvidenceFactProposal.evidence_id == evidence_id,
+            )
+            .order_by(DBEvidenceFactProposal.created_at, DBEvidenceFactProposal.id)
+        )
+        return [self._payload(proposal) for proposal in result.scalars().all()]
+
+    async def attest(
+        self,
+        *,
+        proposal_id: str,
+        tenant_id: str,
+        domain_id: str,
+        reviewer_id: str,
+        action: str,
+        note: str,
+    ) -> Optional[dict[str, Any]]:
+        proposal = (
+            await self.session.execute(
+                select(DBEvidenceFactProposal)
+                .where(
+                    DBEvidenceFactProposal.id == proposal_id,
+                    DBEvidenceFactProposal.tenant_id == tenant_id,
+                    DBEvidenceFactProposal.domain_id == domain_id,
+                )
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if proposal is None:
+            return None
+        if proposal.status != "PENDING":
+            raise EvidenceFactProposalConflictError("This evidence fact proposal has already been reviewed.")
+        if proposal.proposed_by == reviewer_id:
+            raise EvidenceFactProposalConflictError("A proposer cannot accept or reject their own evidence fact.")
+        if action == "ACCEPT":
+            accepted = (
+                await self.session.execute(
+                    select(DBEvidenceFactProposal.id).where(
+                        DBEvidenceFactProposal.evidence_id == proposal.evidence_id,
+                        DBEvidenceFactProposal.target_path == proposal.target_path,
+                        DBEvidenceFactProposal.status == "ACCEPTED",
+                    )
+                )
+            ).scalar_one_or_none()
+            if accepted is not None:
+                raise EvidenceFactProposalConflictError(
+                    "An accepted fact already exists for this evidence and target. It cannot be overwritten; use a new evidence record and governed evaluation."
+                )
+
+        status = "ACCEPTED" if action == "ACCEPT" else "REJECTED"
+        setattr(proposal, "status", status)
+        setattr(proposal, "reviewed_by", reviewer_id)
+        setattr(proposal, "review_note", note)
+        setattr(proposal, "reviewed_at", datetime.now(timezone.utc))
+        self.session.add(
+            DBEvidenceFactProposalEvent(
+                id="efpe_" + uuid.uuid4().hex,
+                proposal_id=proposal.id,
+                tenant_id=tenant_id,
+                domain_id=domain_id,
+                sequence=2,
+                action=status,
+                actor_id=reviewer_id,
+                note=note,
+            )
+        )
+        try:
+            await self.session.commit()
+        except IntegrityError as exc:
+            await self.session.rollback()
+            raise EvidenceFactProposalConflictError(
+                "The evidence fact proposal changed while it was being reviewed."
+            ) from exc
+        return self._payload(proposal)
+
+    async def accepted_claims_and_facts(
+        self,
+        *,
+        tenant_id: str,
+        domain_id: str,
+        evidence_id: str,
+        evidence_sha256: str,
+    ) -> tuple[list[Claim], list[Fact]]:
+        """Materialise deterministic facts only from independently accepted proposals."""
+        result = await self.session.execute(
+            select(DBEvidenceFactProposal)
+            .where(
+                DBEvidenceFactProposal.tenant_id == tenant_id,
+                DBEvidenceFactProposal.domain_id == domain_id,
+                DBEvidenceFactProposal.evidence_id == evidence_id,
+                DBEvidenceFactProposal.evidence_sha256 == evidence_sha256,
+                DBEvidenceFactProposal.status == "ACCEPTED",
+            )
+            .order_by(DBEvidenceFactProposal.created_at, DBEvidenceFactProposal.id)
+        )
+        claims: list[Claim] = []
+        facts: list[Fact] = []
+        for proposal in result.scalars().all():
+            claim_id = "claim_" + cast(str, proposal.id)
+            claims.append(
+                Claim(
+                    id=claim_id,
+                    evidence_id=cast(str, proposal.evidence_id),
+                    target_path=cast(str, proposal.target_path),
+                    asserted_value=proposal.asserted_value,
+                    extraction_confidence=cast(float, proposal.extraction_confidence),
+                    source_trust_level=cast(float, proposal.source_trust_level),
+                    status="resolved",
+                    source_quote=cast(str, proposal.source_quote),
+                    source_locator=(
+                        f"proposal:{proposal.id}" + (
+                            f"; {proposal.source_locator}" if proposal.source_locator else ""
+                        )
+                    ),
+                )
+            )
+            facts.append(
+                Fact(
+                    id="fact_" + cast(str, proposal.id),
+                    target_path=cast(str, proposal.target_path),
+                    resolved_value=proposal.asserted_value,
+                    final_confidence=1.0,
+                    status="resolved",
+                    supporting_claims=[claim_id],
+                )
+            )
+        return claims, facts
+
 class ReleaseRepository:
     """Async repository for fetching immutable releases and compiled RuleGraphs."""
     
@@ -3379,6 +3672,41 @@ class ReasoningRepository:
         data = cast(Dict[str, Any], db_graph.graph_data)
         
         return ReasoningGraph.model_validate(data)
+
+    async def get_evaluation_artifacts(
+        self,
+        graph_id: str,
+        *,
+        tenant_id: str,
+    ) -> Optional[StoredEvaluationArtifacts]:
+        """Load the complete immutable input/output set required for verification."""
+        result = await self.session.execute(
+            select(DBReasoningGraph).where(
+                DBReasoningGraph.id == graph_id,
+                DBReasoningGraph.tenant_id == tenant_id,
+            )
+        )
+        stored_graph = result.scalars().first()
+        if stored_graph is None:
+            return None
+        release_id = cast(Optional[str], stored_graph.release_id)
+        evidence_id = cast(Optional[str], stored_graph.evidence_id)
+        if release_id is None or evidence_id is None:
+            return None
+        claims = await self.get_claims(graph_id, tenant_id=tenant_id)
+        facts = await self.get_facts(graph_id, tenant_id=tenant_id)
+        return StoredEvaluationArtifacts(
+            graph=ReasoningGraph.model_validate(cast(Dict[str, Any], stored_graph.graph_data)),
+            tenant_id=cast(str, stored_graph.tenant_id),
+            domain_id=cast(str, stored_graph.domain_id),
+            subject_id=cast(str, stored_graph.subject_id),
+            release_id=release_id,
+            evidence_id=evidence_id,
+            overall_decision=cast(str, stored_graph.overall_decision),
+            overall_confidence=cast(float, stored_graph.overall_confidence),
+            claims=claims,
+            facts=facts,
+        )
 
     async def get_claims(
         self,

@@ -7,10 +7,16 @@ institution without the deployment and pilot controls described below.
 ## In plain language
 
 An institution can put a policy into a controlled draft, have a different
-person approve it, and then use the approved version to produce the same
-decision every time from the same evidence. The decision has a trace showing
-which rule and which facts led to it. That trace is tied to the exact signed
-policy version used at the time.
+person approve it, then evaluate independently accepted facts against that
+approved version. The same accepted facts and policy release produce the same
+decision every time. A decision has a trace showing which rule and facts led to
+it, and is tied to the exact signed policy version used at the time.
+
+Raw evidence does not decide anything. An authorised staff member records a
+candidate fact against preserved source bytes, a quotation, and a location. A
+different policy owner or tenant administrator accepts or rejects it. Before a
+decision or replay is run, the application recalculates the SHA-256 hash of the
+stored source and fails closed if it no longer matches the evidence record.
 
 The application can also accept a handbook PDF as a source document, keep a
 hash of the source, extract bounded page excerpts, and present OCR text as a
@@ -58,12 +64,12 @@ role, tenant, domain, and subject-ownership check.
 | --- | --- | --- |
 | Subject | Public policy guide; their own personal policy-position view | View how the common approved policy applies to their own authorised trace; request assistance or a review where the institution enabled it. |
 | Metadata steward | Governance Desk | Apply only pre-configured low-risk metadata edits in assigned domains. |
-| Institutional records steward | Institutional Timeline | Record an existing, source-referenced institutional decision for independent certification. Cannot certify it, alter a policy, or create an exception. |
+| Institutional records steward | Institutional Timeline; Evidence Facts | Record an existing, source-referenced institutional decision or cited evidence fact for independent certification. Cannot certify it, alter a policy, or create an exception. |
 | Assistance coordinator | Assistance Inbox; Review Cases; Institutional Timeline | Triage assigned casework and inspect institutional context in assigned domains. Cannot record or certify context events. |
 | Policy author | Handbook Intake; System Records; Policy Register; Shadow Calibration | Upload/review source material, submit mapping configurations, record policy ambiguities, prepare non-identifying calibration suites, and use the draft API. Cannot approve releases or certify their own calibration suite. |
 | Release approver | Handbook Intake; System Records; Policy Review; Policy Register; Shadow Calibration | Inspect source material, independently review mappings and calibration cases, inspect ambiguities, and approve a release. Cannot upload or revise a handbook source. |
-| Policy owner | Policy Register; Shadow Calibration; Institutional Timeline | Record or resolve documented interpretations with an authoritative source; independently certify a calibration suite, classify its mismatches, and certify or reject a context record. A person cannot resolve or certify their own record. |
-| Auditor | Governance Desk; Handbook Intake; System Records; Assistance Inbox; Policy Review; Policy Register; Shadow Calibration | Read-only inspection of configured controls, source material, mapping records, casework, policy review, interpretation records, and calibration reports. |
+| Policy owner | Policy Register; Shadow Calibration; Institutional Timeline; Evidence Facts | Record or resolve documented interpretations with an authoritative source; independently certify a calibration suite, classify its mismatches, and accept or reject a cited evidence fact or context record. A person cannot resolve or certify their own record. |
+| Auditor | Governance Desk; Handbook Intake; System Records; Assistance Inbox; Policy Review; Policy Register; Shadow Calibration; Institutional Timeline; Evidence Facts | Read-only inspection of configured controls, source material, mapping records, casework, policy review, interpretation records, calibration reports, and evidence-fact history. |
 | Tenant administrator | All staff pages | Break-glass administration across the tenant. The release and mapping workflows still enforce separation of duties. |
 
 The former demo `Begin Investigation` control is deliberately not presented in
@@ -75,8 +81,13 @@ owns the evidence; a real operational evaluation flow is still to be built.
 ## Controls that are implemented
 
 - Deterministic evaluation and trace-bound explanation of compiled policy rules.
-  Automated extraction remains untrusted source assistance, not policy logic or
-  an outcome decision.
+  Evaluation accepts only independently reviewed facts bound to preserved source
+  bytes. Automated extraction remains untrusted source assistance, not policy
+  logic or an outcome decision.
+- Auditors can run a replay verifier. It rechecks the evidence hash, signed
+  release bundle, accepted-fact lineage, and recomputed trace rather than merely
+  returning the earlier trace. PostgreSQL makes decision-bearing evidence,
+  claims, facts, traces, releases, and compiled rules append-only.
 - Policy drafts are compiled before storage, approved by a different identity,
   released immutably, cryptographically signed, and versioned with effective
   dates and applicability selectors.
@@ -112,8 +123,11 @@ owns the evidence; a real operational evaluation flow is still to be built.
 - It has no completed institutional SSO browser flow; the reference client
   accepts a host-supplied bearer token while the API validates the token.
 - It has no operational administrator interface for authoring every kind of
-  policy draft, no completed student evidence/appeal portal, and no production
+  policy draft, no completed subject evidence/appeal portal, and no production
   notification service.
+- An accepted evidence fact cannot be overwritten. A first-class correction or
+  successor-fact workflow that preserves the earlier evaluation input while
+  governing the replacement is still required before live operational use.
 - It does not perform a live system-of-record import, automated handbook-to-
   rule conversion, or external workflow write-back.
 - It does not automatically ingest transcripts, committee decisions, emails, or
@@ -130,6 +144,10 @@ owns the evidence; a real operational evaluation flow is still to be built.
 - Recovery drills, monitoring, backup restoration, penetration testing, and
   real serving/migration database-role rehearsals must still be performed with
   the institution before production use.
+- Object-store write-once retention, versioning, and restoration must be
+  configured and tested by the deploying institution. The application detects a
+  changed source hash; it does not itself configure an institution's bucket
+  retention policy.
 
 ## Safety boundary
 

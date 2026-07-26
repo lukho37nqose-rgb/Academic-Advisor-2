@@ -56,7 +56,8 @@ is switched.
    database identity and must not receive a cross-tenant bypass credential.
 6. Run post-deploy checks with institutional test identities: OIDC claim mapping,
    role revocation, tenant/domain isolation, author/approver separation,
-   release signature verification, source upload, assistance route, a
+   release signature verification, source upload, independently reviewed fact
+   acceptance, evidence-hash failure, verified replay, assistance route, a
    subject-owned decision-review case, and an idempotent retry.
 7. Enable shadow traffic only after the policy, privacy, accessibility, and
    operational owners have accepted the pilot entry gates.
@@ -71,7 +72,10 @@ is switched.
 - Keep object storage private and scope application IAM access to
   `tenants/{tenant_id}/` prefixes. Configure lifecycle, export, and audit jobs
   against the same prefix so a tenant's evidence and source documents remain
-  operationally separable without staff handling storage objects.
+  operationally separable without staff handling storage objects. Enable and
+  test object versioning and write-once retention or Object Lock for evidence
+  and handbook sources. The application re-verifies SHA-256 before evaluation
+  and replay, but bucket immutability is an infrastructure control.
 - Restrict migration, application, and break-glass database accounts to distinct
   credentials and least-privilege roles.
 - Run handbook/OCR work through `background_jobs` with an explicit

@@ -1,7 +1,7 @@
 """
 The Reasoning Engine.
 
-This is the core deterministic executor. It takes the resolved Facts (from the Conflict Engine)
+This is the core deterministic executor. It takes independently accepted Facts
 and executes them against the compiled RuleGraph.
 It produces the ReasoningGraph—the canonical, inspectable trace of institutional logic.
 """

@@ -7,7 +7,7 @@ Maps the Core Domain Models into SQLAlchemy ORM tables for Postgres.
 
 from typing import Any
 
-from sqlalchemy import CheckConstraint, Column, String, Float, Integer, Date, DateTime, ForeignKey, Index, Text, UniqueConstraint
+from sqlalchemy import CheckConstraint, Column, String, Float, Integer, Date, DateTime, ForeignKey, Index, Text, UniqueConstraint, text
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.sql import func
 from sqlalchemy.types import TypeDecorator, JSON
@@ -580,6 +580,81 @@ class DBEvidence(Base):
     # The actual blob might be stored in S3, with just the key here
     s3_key_reference = Column(String, nullable=True) 
     timestamp = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class DBEvidenceFactProposal(Base):
+    """A source-referenced fact awaiting independent acceptance or rejection."""
+
+    __tablename__ = 'evidence_fact_proposals'
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('PENDING', 'ACCEPTED', 'REJECTED')",
+            name='ck_evidence_fact_proposal_status',
+        ),
+        CheckConstraint(
+            'extraction_confidence >= 0 AND extraction_confidence <= 1',
+            name='ck_evidence_fact_proposal_extraction_confidence',
+        ),
+        CheckConstraint(
+            'source_trust_level >= 0 AND source_trust_level <= 1',
+            name='ck_evidence_fact_proposal_source_trust',
+        ),
+        Index(
+            'uq_evidence_fact_proposal_accepted_target',
+            'evidence_id',
+            'target_path',
+            unique=True,
+            postgresql_where=text("status = 'ACCEPTED'"),
+            sqlite_where=text("status = 'ACCEPTED'"),
+        ),
+    )
+
+    id = Column(String, primary_key=True)
+    tenant_id = Column(String, nullable=False, index=True)
+    domain_id = Column(String, nullable=False, index=True)
+    evidence_id = Column(String, ForeignKey('evidence.id'), nullable=False, index=True)
+    subject_id = Column(String, nullable=False, index=True)
+    target_path = Column(String, nullable=False, index=True)
+    asserted_value = Column(JSONType, nullable=True)
+    source_quote = Column(Text, nullable=False)
+    source_locator = Column(String, nullable=True)
+    extraction_confidence = Column(Float, nullable=False)
+    source_trust_level = Column(Float, nullable=False)
+    proposal_origin = Column(String, nullable=False, default='MANUAL')
+    evidence_sha256 = Column(String, nullable=False)
+    input_sha256 = Column(String, nullable=False)
+    proposed_by = Column(String, nullable=False)
+    status = Column(String, nullable=False, default='PENDING', index=True)
+    reviewed_by = Column(String, nullable=True)
+    review_note = Column(Text, nullable=True)
+    reviewed_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class DBEvidenceFactProposalEvent(Base):
+    """Append-only lifecycle evidence for a reviewed evidence-fact proposal."""
+
+    __tablename__ = 'evidence_fact_proposal_events'
+    __table_args__ = (
+        UniqueConstraint(
+            'proposal_id', 'sequence', name='uq_evidence_fact_proposal_event_sequence',
+        ),
+        CheckConstraint(
+            "action IN ('SUBMITTED', 'ACCEPTED', 'REJECTED')",
+            name='ck_evidence_fact_proposal_event_action',
+        ),
+    )
+
+    id = Column(String, primary_key=True)
+    proposal_id = Column(String, ForeignKey('evidence_fact_proposals.id'), nullable=False, index=True)
+    tenant_id = Column(String, nullable=False, index=True)
+    domain_id = Column(String, nullable=False, index=True)
+    sequence = Column(Integer, nullable=False)
+    action = Column(String, nullable=False)
+    actor_id = Column(String, nullable=False)
+    note = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
 
 class DBClaim(Base):
     """An extracted assertion retained with its evidence and evaluation context."""

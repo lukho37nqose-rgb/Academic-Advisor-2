@@ -2,9 +2,9 @@
 
 The deterministic evaluator does not require an external AI provider. The
 default provider is `mock`, and merely setting an API key does not enable data
-transfer. AI may assist only with extraction or explanation after the decision
-logic has completed; it never selects a rule, resolves an ambiguity, or changes
-an outcome.
+transfer. AI may assist only with extraction proposals or an explanation after
+the decision logic has completed; it never selects a rule, resolves an
+ambiguity, creates an accepted fact, or changes an outcome.
 
 ## Production gate
 
@@ -23,11 +23,11 @@ own records.
 
 ## Data minimisation
 
-Only the content necessary for the requested extraction or trace explanation
-may cross the approved provider boundary. Extraction refuses to send evidence
-above `EXTERNAL_AI_MAX_INPUT_BYTES` (200,000 bytes by default) and records a
-`needs_human_review` claim instead. It does not truncate and continue, because
-partial evidence can produce a misleading decision.
+Only the content necessary for the requested extraction proposal or trace
+explanation may cross the approved provider boundary. Extraction refuses to
+send evidence above `EXTERNAL_AI_MAX_INPUT_BYTES` (200,000 bytes by default)
+and returns no decision input. It does not truncate and continue, because
+partial evidence can produce a misleading proposal.
 
 Before enabling an external provider, the institution must approve the data
 categories, provider region, retention and training terms, sub-processors,

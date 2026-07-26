@@ -1,9 +1,9 @@
-"""
-The Conflict Engine.
+"""Legacy prototype helper; it is not an institutional evaluation boundary.
 
-Resolves competing Claims into canonical Facts. 
-This is essential for appeals, auditing, and dealing with messy institutional data
-(e.g., when a user form contradicts a system API).
+The production API never calls this weighted resolver. Deterministic evaluation
+uses independently accepted evidence facts from the governed review ledger.
+This module remains only for backwards-compatible prototype experiments and
+must not be used to resolve competing institutional evidence automatically.
 """
 
 from typing import List, Dict, Any, Tuple

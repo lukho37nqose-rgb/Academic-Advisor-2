@@ -12,7 +12,7 @@ const tenantAdminSession: SessionCapabilities = {
     experience: 'staff',
     role: 'tenant_admin',
     role_label: 'Tenant administrator',
-    allowed_views: ['governance', 'institution_setup', 'handbook_intake', 'record_import', 'assistance_inbox', 'decision_review_inbox', 'policy_review', 'policy_ambiguities', 'shadow_calibration', 'institutional_timeline'],
+    allowed_views: ['governance', 'institution_setup', 'handbook_intake', 'record_import', 'assistance_inbox', 'decision_review_inbox', 'policy_review', 'policy_ambiguities', 'shadow_calibration', 'institutional_timeline', 'evidence_facts'],
 };
 
 const subjectSession: SessionCapabilities = {
@@ -84,6 +84,7 @@ test.describe('Workspace access boundaries', () => {
         await expect(page.getByRole('button', { name: 'System Records' })).toBeVisible();
         await expect(page.getByRole('button', { name: 'Shadow Calibration' })).toBeVisible();
         await expect(page.getByRole('button', { name: 'Institutional Timeline' })).toBeVisible();
+        await expect(page.getByRole('button', { name: 'Evidence Facts' })).toBeVisible();
         await expect(page.getByRole('button', { name: 'Investigations' })).toHaveCount(0);
     });
 
@@ -136,7 +137,7 @@ test.describe('Workspace access boundaries', () => {
         await expect(page.getByRole('button', { name: 'New suite' })).toHaveCount(0);
     });
 
-    test('shows a records steward only the institutional timeline workspace', async ({ page }) => {
+    test('shows a records steward the institutional timeline and evidence fact workspaces', async ({ page }) => {
         await page.route('**/api/v1/admin/domains', async route => {
             await route.fulfill({ json: { items: [{ domain_id: 'dom_context', domain_name: 'Academic progression' }] } });
         });
@@ -144,11 +145,43 @@ test.describe('Workspace access boundaries', () => {
             await route.fulfill({ json: { items: [] } });
         });
         await openApplication(page, {
-            experience: 'staff', role: 'institutional_records_steward', role_label: 'Institutional records steward', allowed_views: ['institutional_timeline'],
+            experience: 'staff', role: 'institutional_records_steward', role_label: 'Institutional records steward', allowed_views: ['institutional_timeline', 'evidence_facts'],
         });
         await expect(page.getByRole('button', { name: 'Institutional Timeline' })).toBeVisible();
+        await expect(page.getByRole('button', { name: 'Evidence Facts' })).toBeVisible();
         await expect(page.getByRole('button', { name: 'Governance Desk' })).toHaveCount(0);
         await expect(page.getByRole('button', { name: 'Record existing decision' })).toBeVisible();
+    });
+
+    test('lets a records steward submit a cited fact without using a raw API payload', async ({ page }) => {
+        let submitted: Record<string, unknown> | null = null;
+        await page.route('**/api/v1/admin/domains', async route => {
+            await route.fulfill({ json: { items: [{ domain_id: 'dom_evidence', domain_name: 'Academic progression' }] } });
+        });
+        await page.route('**/api/v1/admin/domains/dom_evidence/fact-fields', async route => {
+            await route.fulfill({ json: { items: [{ target_path: 'facts.completed_credits', label: 'Completed credits', schema_type: 'number' }] } });
+        });
+        await page.route('**/api/v1/governance/evidence?*', async route => {
+            await route.fulfill({ json: { items: [{ evidence_id: 'ev_1', source_type: 'document_upload', captured_at: '2026-07-01T10:00:00Z', integrity_hash: 'a'.repeat(64) }] } });
+        });
+        await page.route('**/api/v1/governance/evidence-fact-proposals?*', async route => {
+            await route.fulfill({ json: { items: [] } });
+        });
+        await page.route('**/api/v1/governance/evidence-fact-proposals', async route => {
+            submitted = route.request().postDataJSON() as Record<string, unknown>;
+            await route.fulfill({ json: { proposal_id: 'efp_1', ...submitted, subject_id: 'student_1', proposal_origin: 'MANUAL', evidence_sha256: 'a'.repeat(64), input_sha256: 'b'.repeat(64), status: 'PENDING', proposed_by: 'records_1' } });
+        });
+        await openApplication(page, {
+            experience: 'staff', role: 'institutional_records_steward', role_label: 'Institutional records steward', allowed_views: ['evidence_facts'],
+        });
+        await page.getByLabel('Subject institutional identifier').fill('student_1');
+        await page.getByRole('button', { name: 'Load sources' }).click();
+        await page.getByRole('button', { name: /document upload/i }).click();
+        await page.getByLabel('Value').fill('252');
+        await page.getByLabel('Exact source quotation').fill('Completed credits: 252.');
+        await page.getByRole('button', { name: 'Submit for independent acceptance' }).click();
+        await expect.poll(() => submitted).not.toBeNull();
+        expect(submitted).toMatchObject({ domain_id: 'dom_evidence', evidence_id: 'ev_1', target_path: 'facts.completed_credits', asserted_value: 252 });
     });
 
     test('shows a subject certified institutional context without staff-only references', async ({ page }) => {

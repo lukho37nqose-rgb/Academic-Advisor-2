@@ -8,14 +8,14 @@ from app.services.auth import Role, UserIdentity, get_current_user
 
 
 _EXPECTED_WORKSPACES: dict[Role, tuple[str, list[str]]] = {
-    Role.TENANT_ADMIN: ("staff", ["governance", "institution_setup", "handbook_intake", "record_import", "assistance_inbox", "decision_review_inbox", "policy_review", "policy_ambiguities", "shadow_calibration", "institutional_timeline"]),
+    Role.TENANT_ADMIN: ("staff", ["governance", "institution_setup", "handbook_intake", "record_import", "assistance_inbox", "decision_review_inbox", "policy_review", "policy_ambiguities", "shadow_calibration", "institutional_timeline", "evidence_facts"]),
     Role.METADATA_STEWARD: ("staff", ["governance"]),
-    Role.INSTITUTIONAL_RECORDS_STEWARD: ("staff", ["institutional_timeline"]),
+    Role.INSTITUTIONAL_RECORDS_STEWARD: ("staff", ["institutional_timeline", "evidence_facts"]),
     Role.ASSISTANCE_COORDINATOR: ("staff", ["assistance_inbox", "decision_review_inbox", "institutional_timeline"]),
     Role.RULE_AUTHOR: ("staff", ["handbook_intake", "record_import", "policy_ambiguities", "shadow_calibration"]),
     Role.RULE_APPROVER: ("staff", ["handbook_intake", "record_import", "policy_review", "policy_ambiguities", "shadow_calibration"]),
-    Role.POLICY_OWNER: ("staff", ["policy_ambiguities", "shadow_calibration", "institutional_timeline"]),
-    Role.AUDITOR: ("staff", ["governance", "handbook_intake", "record_import", "assistance_inbox", "policy_review", "policy_ambiguities", "shadow_calibration", "institutional_timeline"]),
+    Role.POLICY_OWNER: ("staff", ["policy_ambiguities", "shadow_calibration", "institutional_timeline", "evidence_facts"]),
+    Role.AUDITOR: ("staff", ["governance", "handbook_intake", "record_import", "assistance_inbox", "policy_review", "policy_ambiguities", "shadow_calibration", "institutional_timeline", "evidence_facts"]),
     Role.SUBJECT: ("subject", ["policy_guides"]),
 }
 
@@ -74,6 +74,29 @@ def test_only_metadata_roles_can_call_the_quick_edit_route(role: Role) -> None:
                 "new_value": "An unauthorised change.",
                 "reason": "This request must be denied.",
             },
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 403
+
+
+@pytest.mark.parametrize(
+    "role",
+    [
+        Role.SUBJECT,
+        Role.METADATA_STEWARD,
+        Role.ASSISTANCE_COORDINATOR,
+        Role.RULE_AUTHOR,
+        Role.RULE_APPROVER,
+    ],
+)
+def test_only_fact_review_roles_can_list_subject_evidence(role: Role) -> None:
+    app.dependency_overrides[get_current_user] = lambda: _identity(role)
+    try:
+        response = TestClient(app).get(
+            "/api/v1/governance/evidence",
+            params={"domain_id": "dom_assurance", "subject_id": "subject_1"},
         )
     finally:
         app.dependency_overrides.clear()

@@ -37,12 +37,21 @@ _RLS_TABLES = (
     "background_jobs",
     "metadata_overrides", "metadata_quick_edits", "releases", "rule_graphs",
     "system_record_import_mappings", "system_record_import_mapping_events",
-    "evidence", "claims", "facts", "support_requests", "support_request_events",
+    "evidence", "evidence_fact_proposals", "evidence_fact_proposal_events", "claims", "facts", "support_requests", "support_request_events",
     "decision_review_cases", "decision_review_case_events", "reasoning_graphs",
     "shadow_calibration_suites", "shadow_calibration_cases", "shadow_calibration_suite_events",
     "shadow_calibration_runs", "shadow_calibration_findings",
     "institutional_context_events", "institutional_context_event_attestations",
 )
+
+_IMMUTABLE_DECISION_ARTIFACT_TRIGGERS = {
+    "evidence": "prevent_evidence_mutation",
+    "claims": "prevent_claims_mutation",
+    "facts": "prevent_facts_mutation",
+    "reasoning_graphs": "prevent_reasoning_graphs_mutation",
+    "releases": "prevent_releases_mutation",
+    "rule_graphs": "prevent_rule_graphs_mutation",
+}
 
 
 @event.listens_for(Session, "after_begin")
@@ -115,6 +124,26 @@ async def validate_production_database_safety(*, database_engine: AsyncEngine | 
         if unsafe:
             raise RuntimeError(
                 "Production database is missing forced row-level security for: " + ", ".join(unsafe)
+            )
+        trigger_rows = await connection.execute(text("""
+            SELECT relation.relname, trigger.tgname
+            FROM pg_trigger AS trigger
+            JOIN pg_class AS relation ON relation.oid = trigger.tgrelid
+            JOIN pg_namespace AS schema ON schema.oid = relation.relnamespace
+            WHERE NOT trigger.tgisinternal
+                AND schema.nspname = 'public'
+                AND relation.relname = ANY(CAST(:table_names AS text[]))
+        """), {"table_names": list(_IMMUTABLE_DECISION_ARTIFACT_TRIGGERS)})
+        installed_triggers = {(row.relname, row.tgname) for row in trigger_rows}
+        missing_triggers = [
+            f"{table_name}.{trigger_name}"
+            for table_name, trigger_name in _IMMUTABLE_DECISION_ARTIFACT_TRIGGERS.items()
+            if (table_name, trigger_name) not in installed_triggers
+        ]
+        if missing_triggers:
+            raise RuntimeError(
+                "Production database is missing immutable decision-artifact triggers for: "
+                + ", ".join(missing_triggers)
             )
 
 async def get_db_session() -> AsyncGenerator[AsyncSession, None]:

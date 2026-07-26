@@ -7,13 +7,15 @@ It is not a chatbot, student portal, or workflow automation product.
 The runtime follows this pipeline:
 
 ```text
-Evidence -> Claims -> Conflict resolution -> Facts
-         -> RuleGraph evaluation -> ReasoningGraph -> Decision -> Explanation
+Preserved evidence -> cited fact proposal -> independent acceptance -> Facts
+                   -> RuleGraph evaluation -> ReasoningGraph -> Decision -> Explanation
 ```
 
-LLMs may assist with source extraction. They never decide or write the
-subject-facing account of a decision.
-Evaluation between accepted facts and a compiled policy release is deterministic.
+LLMs and OCR may assist staff with source extraction, but their output is never
+evaluated directly. An authorised staff member must record a cited candidate
+fact and a different authorised person must accept it before it becomes an
+evaluation input. Evaluation between those accepted facts and a compiled policy
+release is deterministic.
 
 The product principle is **personalise access to institutional reasoning, not
 institutional policy**: approved rules remain common, while an authorised person
@@ -32,6 +34,10 @@ The repository demonstrates:
 - signed effective periods and applicability selectors, with non-overlap checks, Postgres publication serialisation, replayable policy-selection context, and retained verification bundles for key rotation;
 - enforced author/approver separation of duties;
 - reasoning traces tied to the rule graph used for evaluation;
+- independent fact acceptance, with source quotations, declared-schema checks,
+  separation of duties, and source-hash verification immediately before evaluation;
+- replay verification that rechecks the source hash, signed release, accepted
+  fact lineage, stored trace, and recomputed result;
 - Edge-configured Tier 1 metadata edits with tenant/domain RBAC and an audit log;
 - no-code institutional policy intake that produces a pending, reviewable draft;
 - no-code policy review that renders conditions and citations without exposing JSON;
@@ -48,9 +54,8 @@ The repository demonstrates:
   boundary that blocks partial or malformed imports;
 - governed, immutable system-record mapping configurations with independent
   approval, append-only review history, and forced PostgreSQL tenant RLS;
-- fail-closed external workflow handling: workflow rules are selected and
-  audited but cannot simulate or deliver an institutional write without a
-  durable dispatcher;
+- fail-closed external workflow handling: the runtime does not select, queue,
+  simulate, or deliver an institutional write without a durable dispatcher;
 - production fail-closed configuration checks, non-root container execution,
   separate migration deployment, and health/readiness probes with request IDs;
 - a reference React interface for reasoning traces and governance.
@@ -153,7 +158,10 @@ Use `.env.example` as the local configuration inventory. Do not commit secrets.
 - `IRE_AUTO_CREATE_SCHEMA`: leave `false`; use Alembic for all persistent schemas.
 - `REDIS_URL`: production idempotency and request-lock backend.
 - `IRE_EDGE_ROOT`: optional path to the Edge tenant/domain registry.
-- `REASONING_ENGINE_AI_PROVIDER`: use `mock` for deterministic local runs.
+- `REFERENCE_EVIDENCE_MAX_BYTES`: maximum UTF-8 bytes accepted by the small
+  reference-text adapter; large documents use governed source intake.
+- `REASONING_ENGINE_AI_PROVIDER`: configures an optional proposal-assistance
+  boundary; it never supplies facts directly to evaluation.
 - `OPENAI_API_KEY`: only for configured extraction/explanation boundaries.
 - `GOVERNANCE_PRIVATE_KEY`: release-signing key.
 - `S3_BUCKET_NAME`: private object storage for evidence and handbook ingestion; new objects are automatically namespaced under `tenants/{tenant_id}/`.
@@ -172,7 +180,10 @@ Use `.env.example` as the local configuration inventory. Do not commit secrets.
   migrations.
 - Quick-edit target existence is not yet checked against a canonical Edge resource
   store.
-- Audit rows are append-only by application convention, not database permissions.
+- PostgreSQL makes decision-bearing evidence, claims, facts, traces, releases,
+  compiled rules, and reviewed fact lifecycles append-only. Some supporting
+  audit tables still rely on their specific lifecycle controls and remain
+  subject to an institution's independent audit-export requirements.
 - Production Postgres serialises governance publication per domain. PostgreSQL
   RLS is enforced with transaction-local tenant context and a non-bypass serving
   role. Institution-managed database roles and independent audit export remain
@@ -180,8 +191,8 @@ Use `.env.example` as the local configuration inventory. Do not commit secrets.
 - Handbook PDFs now retain a hashed source object and page-level worker
   checkpoints. OCR, table reconstruction, and real-institution extraction
   quality are not yet proven and cannot enter a release automatically.
-- Claims and facts are retrievable through tenant-scoped APIs, but the reference
-  frontend does not yet provide a complete appeals interface.
+- The reference client supports staff fact entry and independent acceptance, but
+  it does not yet provide a complete subject-facing evidence or appeals interface.
 - Public assistance controls require a production Redis deployment, an active
   retention scheduler, named response owners, and testing of the assisted or
   offline route before a pilot.

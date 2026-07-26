@@ -164,3 +164,15 @@ class BlobStorage:
             yield cls._store[key]
         else:
             raise ValueError("Source object was not found in local storage.")
+
+    @classmethod
+    async def verify_sha256(cls, key: str, expected_hash: str) -> None:
+        """Fail closed when stored source bytes no longer match their evidence record."""
+        if not cls._SHA256_DIGEST.fullmatch(expected_hash):
+            raise ValueError("Evidence record does not contain a valid SHA-256 digest.")
+
+        digest = hashlib.sha256()
+        async for chunk in cls.get_stream(key):
+            digest.update(chunk)
+        if digest.hexdigest() != expected_hash:
+            raise ValueError("Stored source bytes do not match the recorded evidence hash.")
