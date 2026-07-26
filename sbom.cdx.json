@@ -7416,7 +7416,7 @@
       "properties": [
         {
           "name": "ire:requirements-lock-sha256",
-          "value": "18a00559eaa8f3f8a9bc110a305a49137e5794062f7c071a31a646b80a343ea6"
+          "value": "7cb8de64ea060c17113e081070e6f09b0b3bf84a2312f73aa0cb33438040e14d"
         },
         {
           "name": "ire:python-runtime",
@@ -7424,10 +7424,10 @@
         }
       ],
       "type": "application",
-      "version": "18a00559eaa8"
+      "version": "7cb8de64ea06"
     }
   },
-  "serialNumber": "urn:uuid:aaf4d236-3de8-5176-ab5d-c2c584bee85a",
+  "serialNumber": "urn:uuid:8ce050c6-759b-54ca-b463-ddae2037bece",
   "specVersion": "1.5",
   "version": 1
 }

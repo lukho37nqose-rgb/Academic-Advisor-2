@@ -5,6 +5,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from tools.generate_sbom import build_sbom
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -36,3 +38,15 @@ def test_requirements_are_hash_locked_and_match_the_sbom(tmp_path: Path) -> None
     assert sbom["bomFormat"] == "CycloneDX"
     assert sbom["specVersion"] == "1.5"
     assert sbom["components"]
+
+
+def test_sbom_is_independent_of_checkout_line_endings(tmp_path: Path) -> None:
+    lock = ROOT / "requirements.txt"
+    windows_checkout = tmp_path / "requirements.txt"
+    windows_checkout.write_text(
+        lock.read_text(encoding="utf-8").replace("\r\n", "\n").replace("\n", "\r\n"),
+        encoding="utf-8",
+        newline="",
+    )
+
+    assert build_sbom(lock) == build_sbom(windows_checkout)

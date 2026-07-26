@@ -44,7 +44,8 @@ def parse_lock(requirements: Path) -> list[dict[str, object]]:
 
 
 def build_sbom(requirements: Path) -> dict[str, object]:
-    lock_digest = hashlib.sha256(requirements.read_bytes()).hexdigest()
+    lock_text = requirements.read_text(encoding="utf-8").replace("\r\n", "\n")
+    lock_digest = hashlib.sha256(lock_text.encode("utf-8")).hexdigest()
     components = []
     for component in parse_lock(requirements):
         name = str(component["name"])
