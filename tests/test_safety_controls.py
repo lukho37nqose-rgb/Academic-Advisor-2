@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+from datetime import date
 from types import SimpleNamespace
 
 import pytest
@@ -129,6 +130,7 @@ def test_auditor_can_verify_a_release_from_its_stored_bundle(tmp_path, monkeypat
                     signed_payload_hash=payload_hash,
                     signing_key_id=crypto.key_id,
                     signing_public_key=crypto.public_key_pem,
+                    effective_from=date(2026, 1, 1),
                 ),
                 rule_graph,
                 policy_payload["root"],

@@ -73,6 +73,11 @@ from app.infrastructure.edge_registry import (
 )
 from app.services.governance import get_role_permission_matrix
 from app.services.ui_capabilities import get_interface_capabilities
+from app.services.release_integrity import (
+    ReleaseIntegrityError,
+    require_release_integrity_for_evaluation,
+    verify_release_bundle,
+)
 from app.services.institutional_intake import (
     InstitutionalInputError,
     InstitutionalIntakeRequest,
@@ -653,6 +658,19 @@ async def start_evaluation(
                 detail="The supplied rule graph does not belong to the requested immutable release.",
             )
 
+        rule_graph = await repo.get_compiled_rule_graph(request.rule_graph_id)
+        if not rule_graph:
+            raise HTTPException(status_code=424, detail=f"Compiled rule graph {request.rule_graph_id} not found.")
+        if rule_graph.release_id != release.id:
+            raise HTTPException(status_code=409, detail="Compiled rule graph release binding is invalid.")
+        try:
+            require_release_integrity_for_evaluation(release, rule_graph)
+        except ReleaseIntegrityError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail="The selected release failed integrity verification and cannot be evaluated.",
+            ) from exc
+
         if release.effective_from is not None:
             if request.as_of_date is None:
                 raise HTTPException(
@@ -702,12 +720,6 @@ async def start_evaluation(
             policy_context=request.applicability_context,
         )
         
-        rule_graph = await repo.get_compiled_rule_graph(request.rule_graph_id)
-        if not rule_graph:
-            raise HTTPException(status_code=424, detail=f"Compiled rule graph {request.rule_graph_id} not found.")
-        if rule_graph.release_id != release.id:
-            raise HTTPException(status_code=409, detail="Compiled rule graph release binding is invalid.")
-            
         # Verify and fetch real evidence from database
         stored_evidence = await evidence_repo.get_evidence(
             request.evidence_id,
@@ -2032,22 +2044,16 @@ async def verify_release_integrity(
     release = await ReleaseRepository(db).get_release(domain_id, version)
     if release is None:
         raise HTTPException(status_code=404, detail="Release was not found.")
-    if not (
-        release.signed_payload
-        and release.signed_payload_hash
-        and release.signing_key_id
-        and release.signing_public_key
-    ):
+    rule_graph = await ReleaseRepository(db).get_compiled_rule_graph(release.rule_graph_id)
+    if rule_graph is None:
+        valid, reason = False, "persisted compiled graph is unavailable"
+    else:
+        valid, reason = verify_release_bundle(release, rule_graph)
+    if not valid and reason == "release has no complete signing verification bundle":
         raise HTTPException(
             status_code=409,
             detail="This legacy release does not retain a complete verification bundle.",
         )
-    valid = CryptoService.verify_signed_payload(
-        payload=release.signed_payload,
-        signature_hex=release.digital_signature,
-        expected_hash=release.signed_payload_hash,
-        public_key_pem=release.signing_public_key,
-    )
     return {
         "release_id": release.id,
         "domain_id": release.domain_id,
@@ -2055,6 +2061,7 @@ async def verify_release_integrity(
         "signing_key_id": release.signing_key_id,
         "signed_payload_hash": release.signed_payload_hash,
         "signature_valid": valid,
+        "verification_reason": reason,
     }
          
 @app.get("/api/v1/replay/{graph_id}")

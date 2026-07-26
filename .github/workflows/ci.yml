@@ -44,6 +44,33 @@ jobs:
     - name: Run Pytest
       run: python -m pytest tests/ -q
 
+  assurance-baseline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+    - name: Set up Python
+      uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+      with:
+        python-version: "3.12"
+        cache: "pip"
+
+    - name: Install locked dependencies
+      run: |
+        pip install --require-hashes -r requirements.txt
+        pip check
+
+    - name: Produce Enterprise Safety Baseline evidence
+      run: python -m pytest tests/assurance -q --junitxml=assurance-baseline.xml
+
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      if: ${{ !cancelled() }}
+      with:
+        name: enterprise-safety-baseline
+        path: assurance-baseline.xml
+        retention-days: 90
+
   frontend-checks:
     runs-on: ubuntu-latest
     timeout-minutes: 20

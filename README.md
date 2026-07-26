@@ -186,6 +186,8 @@ The exact present-tense capability boundary and page visibility by role are in
 [CURRENT_CAPABILITIES.md](docs/CURRENT_CAPABILITIES.md). The staged path from
 this reference implementation to an institution-controlled environment is in
 [DEPLOYMENT_GUIDE.md](docs/DEPLOYMENT_GUIDE.md).
+The control register, adversarial-test evidence, and open pilot gates are in
+[the Enterprise Safety Baseline](docs/assurance/README.md).
 The access, privacy, and human-review commitments are in
 [ACCESS_AND_TRUST.md](docs/ACCESS_AND_TRUST.md). The institutional SSO contract
 and rollout checks are in [SSO_ROLLOUT.md](docs/SSO_ROLLOUT.md).
