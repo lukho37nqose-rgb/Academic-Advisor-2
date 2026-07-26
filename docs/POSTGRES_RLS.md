@@ -13,6 +13,7 @@ column themselves:
 - domains, releases, and compiled rule graphs;
 - handbook uploads, pages, OCR proposals, and OCR audit events;
 - policy drafts, ambiguity records, metadata audit records, and release data;
+- system-record mapping configurations and their append-only review events;
 - evidence, claims, facts, reasoning graphs, decision-review records, and
   support casework.
 

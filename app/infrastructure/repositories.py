@@ -27,6 +27,8 @@ from app.infrastructure.db import (
     DBHandbookUploadSession,
     DBMetadataQuickEdit,
     DBMetadataOverride,
+    DBSystemRecordImportMapping,
+    DBSystemRecordImportMappingEvent,
     DBRelease,
     DBRuleGraph,
     DBReasoningGraph,
@@ -131,6 +133,10 @@ class DecisionReviewConflictError(ValueError):
 
 class HandbookUploadConflictError(ValueError):
     """Raised when a handbook job cannot be transitioned safely."""
+
+
+class SystemRecordImportMappingConflictError(ValueError):
+    """Raised when a mapping review would violate its governance lifecycle."""
 
 
 class MetadataGovernanceRepository:
@@ -394,6 +400,203 @@ class InstitutionalInputRepository:
             for key, value in sorted(fact_properties.items())
             if isinstance(value, dict)
         ]
+
+
+class SystemRecordImportMappingRepository:
+    """Stores reviewed mapping configuration, never the CSV or subject values."""
+
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    @staticmethod
+    def _payload(record: DBSystemRecordImportMapping) -> dict[str, Any]:
+        return {
+            "mapping_id": cast(str, record.id),
+            "domain_id": cast(str, record.domain_id),
+            "mapping_name": cast(str, record.mapping_name),
+            "source_system": cast(str, record.source_system),
+            "contract": cast(dict[str, Any], record.contract),
+            "contract_sha256": cast(str, record.contract_sha256),
+            "status": cast(str, record.status),
+            "author_id": cast(str, record.author_id),
+            "reviewed_by": cast(Optional[str], record.reviewed_by),
+            "reviewed_at": record.reviewed_at.isoformat() if record.reviewed_at else None,
+            "review_note": cast(Optional[str], record.review_note),
+            "created_at": record.created_at.isoformat() if record.created_at else None,
+        }
+
+    async def create(
+        self,
+        *,
+        mapping_id: str,
+        tenant_id: str,
+        domain_id: str,
+        mapping_name: str,
+        source_system: str,
+        contract: dict[str, Any],
+        contract_sha256: str,
+        author_id: str,
+    ) -> dict[str, Any]:
+        record = DBSystemRecordImportMapping(
+            id=mapping_id,
+            tenant_id=tenant_id,
+            domain_id=domain_id,
+            mapping_name=mapping_name,
+            source_system=source_system,
+            contract=contract,
+            contract_sha256=contract_sha256,
+            author_id=author_id,
+            status="PENDING",
+        )
+        self.session.add(record)
+        try:
+            # PostgreSQL validates the event against the persisted mapping state.
+            await self.session.flush()
+            self.session.add(
+                DBSystemRecordImportMappingEvent(
+                    id="mapping_evt_" + uuid.uuid4().hex,
+                    mapping_id=mapping_id,
+                    tenant_id=tenant_id,
+                    domain_id=domain_id,
+                    sequence=1,
+                    event_type="SUBMITTED",
+                    actor_id=author_id,
+                )
+            )
+            await self.session.commit()
+        except IntegrityError as exc:
+            await self.session.rollback()
+            raise SystemRecordImportMappingConflictError(
+                "The mapping could not be saved due to a concurrent change."
+            ) from exc
+        await self.session.refresh(record)
+        return self._payload(record)
+
+    async def list_for_domain(
+        self,
+        *,
+        tenant_id: str,
+        domain_id: str,
+        status: Optional[str] = None,
+    ) -> list[dict[str, Any]]:
+        query = select(DBSystemRecordImportMapping).where(
+            DBSystemRecordImportMapping.tenant_id == tenant_id,
+            DBSystemRecordImportMapping.domain_id == domain_id,
+        )
+        if status is not None:
+            query = query.where(DBSystemRecordImportMapping.status == status)
+        result = await self.session.execute(
+            query.order_by(DBSystemRecordImportMapping.created_at.desc(), DBSystemRecordImportMapping.id)
+        )
+        return [self._payload(record) for record in result.scalars().all()]
+
+    async def get(
+        self,
+        *,
+        mapping_id: str,
+        tenant_id: str,
+        domain_id: Optional[str] = None,
+    ) -> Optional[dict[str, Any]]:
+        query = select(DBSystemRecordImportMapping).where(
+            DBSystemRecordImportMapping.id == mapping_id,
+            DBSystemRecordImportMapping.tenant_id == tenant_id,
+        )
+        if domain_id is not None:
+            query = query.where(DBSystemRecordImportMapping.domain_id == domain_id)
+        record = (await self.session.execute(query)).scalars().first()
+        return self._payload(record) if record is not None else None
+
+    async def list_events(
+        self,
+        *,
+        mapping_id: str,
+        tenant_id: str,
+        domain_id: str,
+    ) -> Optional[list[dict[str, Any]]]:
+        mapping = await self.get(
+            mapping_id=mapping_id,
+            tenant_id=tenant_id,
+            domain_id=domain_id,
+        )
+        if mapping is None:
+            return None
+        result = await self.session.execute(
+            select(DBSystemRecordImportMappingEvent).where(
+                DBSystemRecordImportMappingEvent.mapping_id == mapping_id,
+                DBSystemRecordImportMappingEvent.tenant_id == tenant_id,
+                DBSystemRecordImportMappingEvent.domain_id == domain_id,
+            ).order_by(DBSystemRecordImportMappingEvent.sequence)
+        )
+        return [
+            {
+                "sequence": cast(int, event.sequence),
+                "event_type": cast(str, event.event_type),
+                "actor_id": cast(str, event.actor_id),
+                "note": cast(Optional[str], event.note),
+                "created_at": event.created_at.isoformat() if event.created_at else None,
+            }
+            for event in result.scalars().all()
+        ]
+
+    async def review(
+        self,
+        *,
+        mapping_id: str,
+        tenant_id: str,
+        domain_id: str,
+        reviewer_id: str,
+        approved: bool,
+        note: Optional[str] = None,
+    ) -> Optional[dict[str, Any]]:
+        result = await self.session.execute(
+            select(DBSystemRecordImportMapping).where(
+                DBSystemRecordImportMapping.id == mapping_id,
+                DBSystemRecordImportMapping.tenant_id == tenant_id,
+                DBSystemRecordImportMapping.domain_id == domain_id,
+            ).with_for_update()
+        )
+        record = result.scalars().first()
+        if record is None:
+            return None
+        if record.status != "PENDING":
+            raise SystemRecordImportMappingConflictError("This mapping has already been reviewed.")
+        if record.author_id == reviewer_id:
+            raise SystemRecordImportMappingConflictError(
+                "Separation of duties violation: the mapping author cannot review their own mapping."
+            )
+        if not approved and not note:
+            raise SystemRecordImportMappingConflictError("A rejection reason is required.")
+
+        next_sequence = (
+            await self.session.execute(
+                select(func.max(DBSystemRecordImportMappingEvent.sequence)).where(
+                    DBSystemRecordImportMappingEvent.mapping_id == mapping_id
+                )
+            )
+        ).scalar_one_or_none() or 0
+        reviewed_at = datetime.now(timezone.utc)
+        status = "APPROVED" if approved else "REJECTED"
+        setattr(record, "status", status)
+        setattr(record, "reviewed_by", reviewer_id)
+        setattr(record, "reviewed_at", reviewed_at)
+        setattr(record, "review_note", note)
+        # Flush the terminal state before adding its lifecycle-checked audit event.
+        await self.session.flush()
+        self.session.add(
+            DBSystemRecordImportMappingEvent(
+                id="mapping_evt_" + uuid.uuid4().hex,
+                mapping_id=mapping_id,
+                tenant_id=tenant_id,
+                domain_id=domain_id,
+                sequence=next_sequence + 1,
+                event_type=status,
+                actor_id=reviewer_id,
+                note=note,
+            )
+        )
+        await self.session.commit()
+        await self.session.refresh(record)
+        return self._payload(record)
 
 
 class HandbookRepository:

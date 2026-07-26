@@ -3,15 +3,40 @@
 ## Purpose
 
 The IRE does not replace an institution's system of record. It accepts a
-one-way export only after a policy owner or integration owner has approved a
-mapping from source columns to the minimal facts required by a decision domain.
+one-way export only after a rule author has submitted, and a different authorised
+reviewer has approved, a mapping from source columns to the minimal facts
+required by a decision domain.
 The current adapter supports a CSV export because it is inspectable, portable,
 and can be rehearsed without vendor credentials. It does not call a vendor API,
 write back to the source system, or persist a file during validation.
 
+## Governed mapping configurations
+
+The **System Records** staff screen lets an institution author a mapping using
+labelled inputs and facts declared by the chosen decision domain. No JSON or
+Python editing is required. Submitting the configuration creates an immutable
+`PENDING` mapping record and a `SUBMITTED` audit event. A `rule_approver` or
+tenant administrator assigned to that domain can inspect the source columns and
+decision facts, then approve it or reject it with a required reason.
+
+An author cannot call a review endpoint, and the database rejects self-review
+even if an application-layer role check is bypassed. A mapping can transition
+only once from `PENDING` to `APPROVED` or `REJECTED`; its configuration and
+SHA-256 contract digest cannot be changed afterwards. Events are append-only on
+PostgreSQL and may be inserted only as the initial submission event or the
+matching attributed terminal-review event. Both mapping tables have forced tenant row-level security, so a
+serving connection can read or write only the tenant and domain named in its
+request context.
+
+The mapping record contains configuration metadata only: column names, fact
+paths, type rules, reviewer attribution, timestamps, notes, and the contract
+digest. It does not retain CSV bytes, subject identifiers, source-record values,
+or a reconciliation snapshot. A rejected mapping is corrected by submitting a
+new configuration, never by editing the historical one.
+
 ## Contract and preview
 
-An approved contract names:
+A mapping contract names:
 
 - the source system and mapping revision;
 - stable subject and source-record-version columns;
@@ -25,7 +50,9 @@ non-UTF-8 files, missing or duplicate headers, missing required fields, invalid
 types, duplicate subject identifiers, malformed CSV, and row or size limits.
 The preview is all-or-nothing: any issue blocks materialisation as downstream
 evidence. Its serialised report intentionally excludes subject identifiers and
-field values.
+field values. A preview is a dry run, not evidence ingestion; an approved
+mapping is necessary configuration for a future import workflow but is not by
+itself authority to create a decision.
 
 Run the fully fictional example with:
 
@@ -50,11 +77,11 @@ operational report into a new personal-data store.
 
 ## Production integration gate
 
-The reference frontend's **System Records** screen now collects this contract
-with labelled fields and a dry-run upload, so institutional staff do not edit
-JSON or Python. It offers only facts declared for the chosen domain, and the
-API independently rejects any undeclared target. A real connector is not ready
-until the system owner approves the source, identity matching,
+The reference frontend's **System Records** screen now creates and reviews this
+contract with labelled fields and a dry-run upload, so institutional staff do
+not edit JSON or Python. It offers only facts declared for the chosen domain,
+and the API independently rejects any undeclared target. A real connector is
+not ready until the system owner approves the source, identity matching,
 incremental-export semantics, retry/idempotency behaviour, reconciliation owner,
 retention, encryption, service account, and incident path. A successful preview
 does not make an export authoritative, and it never creates an operative

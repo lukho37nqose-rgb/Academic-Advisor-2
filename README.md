@@ -39,11 +39,11 @@ The repository demonstrates:
   digests, including approval, fail-closed, and manual-review paths;
 - a one-way, hash-verified system-of-record CSV validation and reconciliation
   boundary that blocks partial or malformed imports;
+- governed, immutable system-record mapping configurations with independent
+  approval, append-only review history, and forced PostgreSQL tenant RLS;
 - fail-closed external workflow handling: workflow rules are selected and
   audited but cannot simulate or deliver an institutional write without a
   durable dispatcher;
-- a one-way, hash-verified system-of-record CSV validation and reconciliation
-  boundary that blocks partial or malformed imports;
 - production fail-closed configuration checks, non-root container execution,
   separate migration deployment, and health/readiness probes with request IDs;
 - a reference React interface for reasoning traces and governance.
@@ -207,5 +207,3 @@ The external workflow safety boundary is in
 [WORKFLOW_DISPATCH.md](docs/WORKFLOW_DISPATCH.md).
 The recovery evidence expected before and during a real pilot is in
 [RECOVERY_EXERCISES.md](docs/RECOVERY_EXERCISES.md).
-The system-of-record import contract and reconciliation boundary are in
-[SYSTEM_OF_RECORD_IMPORTS.md](docs/SYSTEM_OF_RECORD_IMPORTS.md).

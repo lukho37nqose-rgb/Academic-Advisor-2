@@ -278,6 +278,30 @@ async def _seed_two_tenants(app_url: str) -> None:
                 )
                 await connection.execute(
                     text("""
+                        INSERT INTO system_record_import_mappings
+                        (id, tenant_id, domain_id, mapping_name, source_system, contract, contract_sha256, author_id, status)
+                        VALUES
+                        (:id, :tenant_id, :domain_id, 'Rehearsal export', 'Synthetic registrar',
+                         CAST('{"format_version":"1.0","mapping_id":"rehearsal","source_system":"Synthetic registrar","subject_identifier_column":"record_id","source_record_version_column":"version","fields":[{"source_column":"credits","target_path":"facts.completed_credits","value_type":"integer","required":true}],"max_rows":10000,"max_bytes":20000000}' AS jsonb),
+                         :hash, 'author_1', 'PENDING')
+                    """),
+                    {"id": f"mapping_{tenant_id}", "tenant_id": tenant_id, "domain_id": domain_id, "hash": "a" * 64},
+                )
+                await connection.execute(
+                    text("""
+                        INSERT INTO system_record_import_mapping_events
+                        (id, mapping_id, tenant_id, domain_id, sequence, event_type, actor_id)
+                        VALUES (:id, :mapping_id, :tenant_id, :domain_id, 1, 'SUBMITTED', 'author_1')
+                    """),
+                    {
+                        "id": f"mapping_event_{tenant_id}",
+                        "mapping_id": f"mapping_{tenant_id}",
+                        "tenant_id": tenant_id,
+                        "domain_id": domain_id,
+                    },
+                )
+                await connection.execute(
+                    text("""
                         INSERT INTO releases (id, domain_id, version, rule_graph_id, digital_signature)
                         VALUES (:id, :domain_id, '2026.1', :graph_id, 'rehearsal-signature')
                     """),
@@ -356,12 +380,37 @@ def test_serving_session_cannot_read_update_or_insert_across_tenants(
                         text("SELECT id FROM releases WHERE id = 'rel_private'")
                     )).scalars().all()
                     assert hidden_release == []
+                    visible_mappings = (await session.execute(
+                        text("SELECT id FROM system_record_import_mappings ORDER BY id")
+                    )).scalars().all()
+                    visible_mapping_events = (await session.execute(
+                        text("SELECT id FROM system_record_import_mapping_events ORDER BY id")
+                    )).scalars().all()
+                    assert visible_mappings == ["mapping_tenant_uct"]
+                    assert visible_mapping_events == ["mapping_event_tenant_uct"]
                     await session.execute(text("""
                         UPDATE policy_drafts
                         SET policy_name = 'cross-tenant mutation'
                         WHERE id = 'draft_other'
                     """))
                     await session.commit()
+
+            with tenant_scope("tenant_uct"):
+                async with session_factory() as session:
+                    with pytest.raises(DBAPIError):
+                        await session.execute(text("""
+                            UPDATE system_record_import_mappings
+                            SET mapping_name = 'rewritten'
+                            WHERE id = 'mapping_tenant_uct'
+                        """))
+
+                async with session_factory() as session:
+                    with pytest.raises(DBAPIError):
+                        await session.execute(text("""
+                            UPDATE system_record_import_mapping_events
+                            SET actor_id = 'rewritten'
+                            WHERE id = 'mapping_event_tenant_uct'
+                        """))
 
             with tenant_scope("tenant_other"):
                 async with session_factory() as session:

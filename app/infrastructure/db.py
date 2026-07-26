@@ -7,7 +7,7 @@ Maps the Core Domain Models into SQLAlchemy ORM tables for Postgres.
 
 from typing import Any
 
-from sqlalchemy import Column, String, Float, Integer, Date, DateTime, ForeignKey, Index, Text, UniqueConstraint
+from sqlalchemy import CheckConstraint, Column, String, Float, Integer, Date, DateTime, ForeignKey, Index, Text, UniqueConstraint
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.sql import func
 from sqlalchemy.types import TypeDecorator, JSON
@@ -245,6 +245,67 @@ class DBMetadataQuickEdit(Base):
     actor_id = Column(String, nullable=False)
     actor_role = Column(String, nullable=False)
     applied_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class DBSystemRecordImportMapping(Base):
+    """A reviewed, versioned CSV mapping with no imported subject records."""
+    __tablename__ = 'system_record_import_mappings'
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('PENDING', 'APPROVED', 'REJECTED')",
+            name='ck_system_record_import_mapping_status',
+        ),
+        CheckConstraint(
+            "length(contract_sha256) = 64",
+            name='ck_system_record_import_mapping_contract_hash',
+        ),
+        CheckConstraint(
+            "(status = 'PENDING' AND reviewed_by IS NULL AND reviewed_at IS NULL) "
+            "OR (status IN ('APPROVED', 'REJECTED') AND reviewed_by IS NOT NULL AND reviewed_at IS NOT NULL)",
+            name='ck_system_record_import_mapping_review_state',
+        ),
+        CheckConstraint(
+            "status <> 'REJECTED' OR review_note IS NOT NULL",
+            name='ck_system_record_import_mapping_rejection_note',
+        ),
+        Index('ix_system_record_import_mappings_tenant_domain_status', 'tenant_id', 'domain_id', 'status'),
+    )
+
+    id = Column(String, primary_key=True)
+    tenant_id = Column(String, ForeignKey('tenants.id'), nullable=False, index=True)
+    domain_id = Column(String, ForeignKey('domains.id'), nullable=False, index=True)
+    mapping_name = Column(String, nullable=False)
+    source_system = Column(String, nullable=False)
+    contract = Column(JSONType, nullable=False)
+    contract_sha256 = Column(String, nullable=False)
+    author_id = Column(String, nullable=False)
+    status = Column(String, nullable=False, default='PENDING', index=True)
+    reviewed_by = Column(String, nullable=True)
+    reviewed_at = Column(DateTime(timezone=True), nullable=True)
+    review_note = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class DBSystemRecordImportMappingEvent(Base):
+    """Append-only review trail for an import mapping configuration."""
+    __tablename__ = 'system_record_import_mapping_events'
+    __table_args__ = (
+        UniqueConstraint('mapping_id', 'sequence', name='uq_system_record_import_mapping_event_sequence'),
+        CheckConstraint(
+            "event_type IN ('SUBMITTED', 'APPROVED', 'REJECTED')",
+            name='ck_system_record_import_mapping_event_type',
+        ),
+    )
+
+    id = Column(String, primary_key=True)
+    mapping_id = Column(String, ForeignKey('system_record_import_mappings.id'), nullable=False, index=True)
+    tenant_id = Column(String, nullable=False, index=True)
+    domain_id = Column(String, nullable=False, index=True)
+    sequence = Column(Integer, nullable=False)
+    event_type = Column(String, nullable=False)
+    actor_id = Column(String, nullable=False)
+    note = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 class DBRelease(Base):
     __tablename__ = 'releases'

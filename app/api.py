@@ -45,6 +45,8 @@ from app.infrastructure.repositories import (
     ReleaseVersionConflictError,
     ReasoningRepository,
     ReleaseRepository,
+    SystemRecordImportMappingConflictError,
+    SystemRecordImportMappingRepository,
     acquire_domain_governance_lock,
 )
 from app.core.engine import generate_reasoning_graph
@@ -120,6 +122,41 @@ def system_record_import_max_bytes() -> int:
     except ValueError:
         return 20_000_000
     return min(max(value, 1_024), 200_000_000)
+
+
+async def validated_system_record_import_contract(
+    *,
+    raw_contract: dict[str, Any],
+    tenant_id: str,
+    domain_id: str,
+    db: AsyncSession,
+) -> SystemRecordImportContract:
+    """Validate a no-code mapping against the selected domain's declared facts."""
+
+    maximum_bytes = system_record_import_max_bytes()
+    try:
+        contract = SystemRecordImportContract.model_validate(raw_contract).model_copy(
+            update={"max_bytes": min(int(raw_contract.get("max_bytes", maximum_bytes)), maximum_bytes)}
+        )
+    except (TypeError, ValueError, ValidationError) as exc:
+        raise HTTPException(status_code=422, detail="The import mapping is invalid.") from exc
+
+    approved_fields = await InstitutionalInputRepository(db).list_domain_fact_fields(
+        tenant_id=tenant_id,
+        domain_id=domain_id,
+    )
+    if approved_fields is None:
+        raise HTTPException(status_code=404, detail="Decision domain was not found.")
+    approved_targets = {field["target_path"] for field in approved_fields}
+    unsupported_targets = sorted(
+        field.target_path for field in contract.fields if field.target_path not in approved_targets
+    )
+    if unsupported_targets:
+        raise HTTPException(
+            status_code=422,
+            detail="The mapping contains facts that are not declared for this decision domain.",
+        )
+    return contract
 
 
 @app.middleware("http")
@@ -314,6 +351,52 @@ class QuickEditRequest(BaseModel):
         trimmed = value.strip()
         if not trimmed:
             raise ValueError("Value cannot be blank.")
+        return trimmed
+
+
+class SystemRecordImportMappingRequest(BaseModel):
+    """A staff-authored configuration, not an uploaded record export."""
+
+    domain_id: str = Field(min_length=1)
+    contract: dict[str, Any]
+
+    @field_validator("domain_id")
+    @classmethod
+    def trim_domain_id(cls, value: str) -> str:
+        trimmed = value.strip()
+        if not trimmed:
+            raise ValueError("Domain identifier cannot be blank.")
+        return trimmed
+
+
+class SystemRecordImportMappingApprovalRequest(BaseModel):
+    domain_id: str = Field(min_length=1)
+    note: Optional[str] = Field(default=None, max_length=2000)
+
+    @field_validator("domain_id")
+    @classmethod
+    def trim_domain_id(cls, value: str) -> str:
+        trimmed = value.strip()
+        if not trimmed:
+            raise ValueError("Domain identifier cannot be blank.")
+        return trimmed
+
+    @field_validator("note")
+    @classmethod
+    def trim_note(cls, value: Optional[str]) -> Optional[str]:
+        return value.strip() if value and value.strip() else None
+
+
+class SystemRecordImportMappingRejectionRequest(BaseModel):
+    domain_id: str = Field(min_length=1)
+    reason: str = Field(min_length=3, max_length=2000)
+
+    @field_validator("domain_id", "reason")
+    @classmethod
+    def trim_required_text(cls, value: str) -> str:
+        trimmed = value.strip()
+        if not trimmed:
+            raise ValueError("A rejection reason is required.")
         return trimmed
 
 
@@ -906,28 +989,152 @@ async def preview_system_record_import(
         raw_contract = json.loads(contract_json)
         if not isinstance(raw_contract, dict):
             raise ValueError("Import contract must be an object.")
-        contract = SystemRecordImportContract.model_validate(raw_contract).model_copy(
-            update={"max_bytes": min(int(raw_contract.get("max_bytes", maximum_bytes)), maximum_bytes)}
-        )
-    except (TypeError, ValueError, ValidationError, json.JSONDecodeError) as exc:
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
         raise HTTPException(status_code=422, detail="The import mapping is invalid.") from exc
+    contract = await validated_system_record_import_contract(
+        raw_contract=raw_contract,
+        tenant_id=user.tenant_id,
+        domain_id=domain_id,
+        db=db,
+    )
+    return preview_system_record_csv(content, contract)
 
-    approved_fields = await InstitutionalInputRepository(db).list_domain_fact_fields(
+
+@app.post("/api/v1/admin/system-record-import-mappings", status_code=201)
+async def submit_system_record_import_mapping(
+    request: SystemRecordImportMappingRequest,
+    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.RULE_AUTHOR])),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Submit a reusable CSV mapping for review, retaining configuration only."""
+
+    ensure_domain_access(user, request.domain_id)
+    contract = await validated_system_record_import_contract(
+        raw_contract=request.contract,
+        tenant_id=user.tenant_id,
+        domain_id=request.domain_id,
+        db=db,
+    )
+    contract_document = contract.model_dump(mode="json")
+    contract_sha256 = hashlib.sha256(
+        json.dumps(contract_document, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+    ).hexdigest()
+    try:
+        return await SystemRecordImportMappingRepository(db).create(
+            mapping_id="mapping_" + uuid.uuid4().hex,
+            tenant_id=user.tenant_id,
+            domain_id=request.domain_id,
+            mapping_name=contract.mapping_id,
+            source_system=contract.source_system,
+            contract=contract_document,
+            contract_sha256=contract_sha256,
+            author_id=user.user_id,
+        )
+    except SystemRecordImportMappingConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.get("/api/v1/admin/system-record-import-mappings")
+async def list_system_record_import_mappings(
+    domain_id: str,
+    status: Optional[Literal["PENDING", "APPROVED", "REJECTED"]] = None,
+    user: UserIdentity = Depends(require_role([
+        Role.TENANT_ADMIN,
+        Role.RULE_AUTHOR,
+        Role.RULE_APPROVER,
+        Role.AUDITOR,
+    ])),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """List submitted mapping configurations for an assigned decision domain."""
+
+    ensure_domain_access(user, domain_id)
+    return {
+        "items": await SystemRecordImportMappingRepository(db).list_for_domain(
+            tenant_id=user.tenant_id,
+            domain_id=domain_id,
+            status=status,
+        ),
+        "can_submit": user.role in {Role.TENANT_ADMIN, Role.RULE_AUTHOR},
+        "can_review": user.role in {Role.TENANT_ADMIN, Role.RULE_APPROVER},
+    }
+
+
+@app.get("/api/v1/admin/system-record-import-mappings/{mapping_id}/history")
+async def get_system_record_import_mapping_history(
+    mapping_id: str,
+    domain_id: str,
+    user: UserIdentity = Depends(require_role([
+        Role.TENANT_ADMIN,
+        Role.RULE_AUTHOR,
+        Role.RULE_APPROVER,
+        Role.AUDITOR,
+    ])),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Return the immutable event trail for a submitted mapping."""
+
+    ensure_domain_access(user, domain_id)
+    events = await SystemRecordImportMappingRepository(db).list_events(
+        mapping_id=mapping_id,
         tenant_id=user.tenant_id,
         domain_id=domain_id,
     )
-    if approved_fields is None:
-        raise HTTPException(status_code=404, detail="Decision domain was not found.")
-    approved_targets = {field["target_path"] for field in approved_fields}
-    unsupported_targets = sorted(
-        field.target_path for field in contract.fields if field.target_path not in approved_targets
-    )
-    if unsupported_targets:
-        raise HTTPException(
-            status_code=422,
-            detail="The mapping contains facts that are not declared for this decision domain.",
+    if events is None:
+        raise HTTPException(status_code=404, detail="System-record import mapping was not found.")
+    return {"items": events}
+
+
+@app.post("/api/v1/admin/system-record-import-mappings/{mapping_id}/approve")
+async def approve_system_record_import_mapping(
+    mapping_id: str,
+    request: SystemRecordImportMappingApprovalRequest,
+    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.RULE_APPROVER])),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Approve an immutable configuration; authors cannot approve their own work."""
+
+    ensure_domain_access(user, request.domain_id)
+    try:
+        mapping = await SystemRecordImportMappingRepository(db).review(
+            mapping_id=mapping_id,
+            tenant_id=user.tenant_id,
+            domain_id=request.domain_id,
+            reviewer_id=user.user_id,
+            approved=True,
+            note=request.note,
         )
-    return preview_system_record_csv(content, contract)
+    except SystemRecordImportMappingConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if mapping is None:
+        raise HTTPException(status_code=404, detail="System-record import mapping was not found.")
+    return mapping
+
+
+@app.post("/api/v1/admin/system-record-import-mappings/{mapping_id}/reject")
+async def reject_system_record_import_mapping(
+    mapping_id: str,
+    request: SystemRecordImportMappingRejectionRequest,
+    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.RULE_APPROVER])),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Reject a mapping with an auditable reason; it cannot be edited in place."""
+
+    ensure_domain_access(user, request.domain_id)
+    try:
+        mapping = await SystemRecordImportMappingRepository(db).review(
+            mapping_id=mapping_id,
+            tenant_id=user.tenant_id,
+            domain_id=request.domain_id,
+            reviewer_id=user.user_id,
+            approved=False,
+            note=request.reason,
+        )
+    except SystemRecordImportMappingConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if mapping is None:
+        raise HTTPException(status_code=404, detail="System-record import mapping was not found.")
+    return mapping
 
 
 @app.post("/api/v1/governance/handbook-upload-sessions", status_code=201)

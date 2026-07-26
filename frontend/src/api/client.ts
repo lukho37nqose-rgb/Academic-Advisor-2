@@ -244,6 +244,29 @@ export interface SystemRecordImportPreview {
     issues: Array<{ row_number?: number | null; code: string; message: string }>;
 }
 
+export type SystemRecordImportMappingStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
+
+export interface SystemRecordImportMapping {
+    mapping_id: string;
+    domain_id: string;
+    mapping_name: string;
+    source_system: string;
+    contract: SystemRecordImportContract;
+    contract_sha256: string;
+    status: SystemRecordImportMappingStatus;
+    author_id: string;
+    reviewed_by?: string | null;
+    reviewed_at?: string | null;
+    review_note?: string | null;
+    created_at?: string | null;
+}
+
+export interface SystemRecordImportMappingList {
+    items: SystemRecordImportMapping[];
+    can_submit: boolean;
+    can_review: boolean;
+}
+
 export type SupportRequestStatus = 'OPEN' | 'IN_PROGRESS' | 'CLOSED';
 
 export interface SupportRequest {
@@ -479,6 +502,49 @@ export const previewSystemRecordImport = async (
         '/admin/system-record-imports/preview',
         formData,
         { headers: { 'Content-Type': 'multipart/form-data' } },
+    );
+    return response.data;
+}
+
+export const fetchSystemRecordImportMappings = async (
+    domainId: string,
+): Promise<SystemRecordImportMappingList> => {
+    const response = await apiClient.get<SystemRecordImportMappingList>('/admin/system-record-import-mappings', {
+        params: { domain_id: domainId },
+    });
+    return response.data;
+}
+
+export const submitSystemRecordImportMapping = async (
+    domainId: string,
+    contract: SystemRecordImportContract,
+): Promise<SystemRecordImportMapping> => {
+    const response = await apiClient.post<SystemRecordImportMapping>('/admin/system-record-import-mappings', {
+        domain_id: domainId,
+        contract,
+    });
+    return response.data;
+}
+
+export const approveSystemRecordImportMapping = async (
+    mappingId: string,
+    domainId: string,
+): Promise<SystemRecordImportMapping> => {
+    const response = await apiClient.post<SystemRecordImportMapping>(
+        `/admin/system-record-import-mappings/${mappingId}/approve`,
+        { domain_id: domainId },
+    );
+    return response.data;
+}
+
+export const rejectSystemRecordImportMapping = async (
+    mappingId: string,
+    domainId: string,
+    reason: string,
+): Promise<SystemRecordImportMapping> => {
+    const response = await apiClient.post<SystemRecordImportMapping>(
+        `/admin/system-record-import-mappings/${mappingId}/reject`,
+        { domain_id: domainId, reason },
     );
     return response.data;
 }

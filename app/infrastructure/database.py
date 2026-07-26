@@ -35,6 +35,7 @@ _RLS_TABLES = (
     "policy_ambiguity_events", "handbook_uploads", "handbook_upload_sessions",
     "handbook_pages", "handbook_ocr_reviews", "handbook_ocr_review_events",
     "metadata_overrides", "metadata_quick_edits", "releases", "rule_graphs",
+    "system_record_import_mappings", "system_record_import_mapping_events",
     "evidence", "claims", "facts", "support_requests", "support_request_events",
     "decision_review_cases", "decision_review_case_events", "reasoning_graphs",
 )

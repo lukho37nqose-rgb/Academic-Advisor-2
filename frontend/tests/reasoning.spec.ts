@@ -232,6 +232,28 @@ test.describe('Institutional Input And Public Access', () => {
         await page.route('**/api/v1/admin/domains', async route => {
             await route.fulfill({ json: { items: [{ domain_id: 'dom_import', domain_name: 'Student Support Eligibility' }] } });
         });
+        await page.route('**/api/v1/admin/system-record-import-mappings**', async route => {
+            if (route.request().method() === 'GET') {
+                await route.fulfill({ json: { items: [], can_submit: true, can_review: false } });
+                return;
+            }
+            expect(route.request().postDataJSON()).toEqual({
+                domain_id: 'dom_import',
+                contract: {
+                    mapping_id: 'income-v1', source_system: 'Example records', subject_identifier_column: 'record_id',
+                    source_record_version_column: 'version',
+                    fields: [{ source_column: 'income', target_path: 'facts.household_income', value_type: 'number', required: true }],
+                },
+            });
+            await route.fulfill({
+                status: 201,
+                json: {
+                    mapping_id: 'mapping_income_1', domain_id: 'dom_import', mapping_name: 'income-v1', source_system: 'Example records',
+                    contract: { mapping_id: 'income-v1', source_system: 'Example records', subject_identifier_column: 'record_id', source_record_version_column: 'version', fields: [{ source_column: 'income', target_path: 'facts.household_income', value_type: 'number', required: true }] },
+                    contract_sha256: 'a'.repeat(64), status: 'PENDING', author_id: 'author_1',
+                },
+            });
+        });
         await page.route('**/api/v1/admin/domains/dom_import/record-import-fields', async route => {
             await route.fulfill({ json: { items: [{ target_path: 'facts.household_income', label: 'Annual household income', schema_type: 'number' }] } });
         });
@@ -255,9 +277,42 @@ test.describe('Institutional Input And Public Access', () => {
         await page.getByLabel('Subject identifier column').fill('record_id');
         await page.getByLabel('Source record version column').fill('version');
         await page.getByLabel('Export column name').fill('income');
+        await page.getByRole('button', { name: 'Submit mapping for review' }).click();
+        await expect(page.getByText('Mapping income-v1 was submitted for independent review.')).toBeVisible();
         await page.getByRole('button', { name: 'Check export' }).click();
         await expect(page.getByRole('heading', { name: 'Export check' })).toBeVisible();
         await expect(page.getByText('Ignored columns: unneeded_note.')).toBeVisible();
+    });
+
+    test('lets a separate mapping approver review a pending no-code configuration', async ({ page }) => {
+        const pendingMapping = {
+            mapping_id: 'mapping_review_1', domain_id: 'dom_import', mapping_name: 'credits-v1', source_system: 'Registrar export',
+            contract: {
+                mapping_id: 'credits-v1', source_system: 'Registrar export', subject_identifier_column: 'student_number',
+                source_record_version_column: 'record_version', fields: [{ source_column: 'credits', target_path: 'facts.completed_credits', value_type: 'integer', required: true }],
+            },
+            contract_sha256: 'a'.repeat(64), status: 'PENDING', author_id: 'author_1',
+        };
+        await page.route('**/api/v1/admin/domains', async route => {
+            await route.fulfill({ json: { items: [{ domain_id: 'dom_import', domain_name: 'Student Support Eligibility' }] } });
+        });
+        await page.route('**/api/v1/admin/system-record-import-mappings**', async route => {
+            if (route.request().method() === 'GET') {
+                await route.fulfill({ json: { items: [pendingMapping], can_submit: false, can_review: true } });
+                return;
+            }
+            await route.fulfill({
+                json: { ...pendingMapping, status: 'APPROVED', reviewed_by: 'approver_1', reviewed_at: '2026-07-26T10:00:00Z' },
+            });
+        });
+
+        await openApplication(page);
+        await page.getByRole('button', { name: 'System Records' }).click();
+        await expect(page.getByRole('heading', { name: 'Saved mapping configurations' })).toBeVisible();
+        await expect(page.getByText('credits to facts.completed_credits')).toBeVisible();
+        await page.getByRole('button', { name: 'Approve mapping' }).click();
+        await expect(page.getByText('Mapping credits-v1 was approved.')).toBeVisible();
+        await expect(page.getByText('APPROVED', { exact: true })).toBeVisible();
     });
 
     test('creates a policy draft from guided institutional input', async ({ page }) => {
