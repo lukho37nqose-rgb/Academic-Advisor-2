@@ -182,6 +182,10 @@ Use `.env.example` as the local configuration inventory. Do not commit secrets.
 See [PRODUCT_DEFINITION.md](docs/PRODUCT_DEFINITION.md) and
 [SYSTEM_ARCHITECTURE.md](docs/SYSTEM_ARCHITECTURE.md). The inputs required for a
 real institutional pilot are in [PILOT_READINESS.md](docs/PILOT_READINESS.md).
+The exact present-tense capability boundary and page visibility by role are in
+[CURRENT_CAPABILITIES.md](docs/CURRENT_CAPABILITIES.md). The staged path from
+this reference implementation to an institution-controlled environment is in
+[DEPLOYMENT_GUIDE.md](docs/DEPLOYMENT_GUIDE.md).
 The access, privacy, and human-review commitments are in
 [ACCESS_AND_TRUST.md](docs/ACCESS_AND_TRUST.md). The institutional SSO contract
 and rollout checks are in [SSO_ROLLOUT.md](docs/SSO_ROLLOUT.md).

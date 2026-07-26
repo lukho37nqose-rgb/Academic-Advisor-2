@@ -35,7 +35,7 @@ function formatDate(value?: string | null) {
   return value ? new Date(value).toLocaleString() : 'Not recorded';
 }
 
-export function DecisionReviewInbox() {
+export function DecisionReviewInbox({ canManage }: { canManage: boolean }) {
   const [domains, setDomains] = useState<Array<{ domain_id: string; domain_name: string }>>([]);
   const [domainId, setDomainId] = useState('');
   const [cases, setCases] = useState<DecisionReviewCase[]>([]);
@@ -80,6 +80,7 @@ export function DecisionReviewInbox() {
     nextResolution?: DecisionReviewResolution,
     nextResponseMessage?: string,
   ) => {
+    if (!canManage) return;
     setUpdatingId(reviewCase.id);
     setError(null);
     try {
@@ -149,12 +150,12 @@ export function DecisionReviewInbox() {
                 </td>
                 <td className="whitespace-nowrap px-3 py-4 font-medium">{reviewCase.status.replace('_', ' ')}</td>
                 <td className="px-3 py-4">
-                  {reviewCase.status === 'SUBMITTED' && <button type="button" disabled={updatingId === reviewCase.id} onClick={() => void transition(reviewCase, 'ACKNOWLEDGED')} className="inline-flex items-center gap-2 rounded border border-border px-3 py-1.5 text-sm font-medium hover:bg-accent disabled:opacity-40"><CheckCircle2 className="h-4 w-4" />Acknowledge</button>}
-                  {reviewCase.status === 'ACKNOWLEDGED' && <button type="button" disabled={updatingId === reviewCase.id} onClick={() => void transition(reviewCase, 'UNDER_REVIEW')} className="inline-flex items-center gap-2 rounded border border-border px-3 py-1.5 text-sm font-medium hover:bg-accent disabled:opacity-40"><FileSearch className="h-4 w-4" />Begin review</button>}
-                  {reviewCase.status === 'UNDER_REVIEW' && resolvingId !== reviewCase.id && <button type="button" disabled={updatingId === reviewCase.id} onClick={() => setResolvingId(reviewCase.id)} className="inline-flex items-center gap-2 rounded border border-border px-3 py-1.5 text-sm font-medium hover:bg-accent disabled:opacity-40"><Send className="h-4 w-4" />Resolve</button>}
-                  {reviewCase.status === 'RESOLVED' && <button type="button" disabled={updatingId === reviewCase.id} onClick={() => void transition(reviewCase, 'CLOSED')} className="inline-flex items-center gap-2 rounded border border-border px-3 py-1.5 text-sm font-medium hover:bg-accent disabled:opacity-40"><CheckCircle2 className="h-4 w-4" />Close case</button>}
+                  {canManage && reviewCase.status === 'SUBMITTED' && <button type="button" disabled={updatingId === reviewCase.id} onClick={() => void transition(reviewCase, 'ACKNOWLEDGED')} className="inline-flex items-center gap-2 rounded border border-border px-3 py-1.5 text-sm font-medium hover:bg-accent disabled:opacity-40"><CheckCircle2 className="h-4 w-4" />Acknowledge</button>}
+                  {canManage && reviewCase.status === 'ACKNOWLEDGED' && <button type="button" disabled={updatingId === reviewCase.id} onClick={() => void transition(reviewCase, 'UNDER_REVIEW')} className="inline-flex items-center gap-2 rounded border border-border px-3 py-1.5 text-sm font-medium hover:bg-accent disabled:opacity-40"><FileSearch className="h-4 w-4" />Begin review</button>}
+                  {canManage && reviewCase.status === 'UNDER_REVIEW' && resolvingId !== reviewCase.id && <button type="button" disabled={updatingId === reviewCase.id} onClick={() => setResolvingId(reviewCase.id)} className="inline-flex items-center gap-2 rounded border border-border px-3 py-1.5 text-sm font-medium hover:bg-accent disabled:opacity-40"><Send className="h-4 w-4" />Resolve</button>}
+                  {canManage && reviewCase.status === 'RESOLVED' && <button type="button" disabled={updatingId === reviewCase.id} onClick={() => void transition(reviewCase, 'CLOSED')} className="inline-flex items-center gap-2 rounded border border-border px-3 py-1.5 text-sm font-medium hover:bg-accent disabled:opacity-40"><CheckCircle2 className="h-4 w-4" />Close case</button>}
                   {reviewCase.status === 'CLOSED' && <span className="text-muted">Closed</span>}
-                  {resolvingId === reviewCase.id && <div className="mt-3 grid min-w-80 gap-2">
+                  {canManage && resolvingId === reviewCase.id && <div className="mt-3 grid min-w-80 gap-2">
                     <select aria-label={`Resolution for case ${reviewCase.id}`} value={resolution} onChange={(event) => setResolution(event.target.value as DecisionReviewResolution)} className="rounded border border-border bg-white px-2 py-1.5 outline-none focus:border-primary">
                       {resolutionOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                     </select>

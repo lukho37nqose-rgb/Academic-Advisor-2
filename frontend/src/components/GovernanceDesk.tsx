@@ -50,7 +50,7 @@ function errorMessage(err: unknown) {
   return maybeAxios.message || 'Governance request failed.';
 }
 
-export function GovernanceDesk() {
+export function GovernanceDesk({ canApplyQuickEdit }: { canApplyQuickEdit: boolean }) {
   const [form, setForm] = useState<QuickEditPayload>(initialForm);
   const [permissions, setPermissions] = useState<GovernancePermissions | null>(null);
   const [loadingPolicy, setLoadingPolicy] = useState(false);
@@ -96,6 +96,7 @@ export function GovernanceDesk() {
   );
   const selectedField = selectedTarget?.fields.find((field) => field.name === form.field);
   const canSubmit =
+    canApplyQuickEdit &&
     Boolean(selectedField) &&
     Boolean(form.target_id.trim()) &&
     Boolean(form.new_value.trim()) &&
@@ -165,6 +166,12 @@ export function GovernanceDesk() {
 
       <section className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_360px]">
         <form onSubmit={handleSubmit} className="space-y-5">
+          {!canApplyQuickEdit && (
+            <p className="border-l-2 border-border pl-3 text-sm text-muted">
+              This account may inspect governance controls but cannot apply metadata changes.
+            </p>
+          )}
+          <fieldset disabled={!canApplyQuickEdit} className="space-y-5 disabled:opacity-60">
           <div className="flex items-center gap-2 border-b border-border pb-3">
             <FilePenLine className="h-4 w-4 text-muted" />
             <h3 className="text-base font-semibold">Quick edit</h3>
@@ -304,6 +311,7 @@ export function GovernanceDesk() {
             <FilePenLine className="h-4 w-4" />
             {submitting ? 'Applying...' : 'Apply quick edit'}
           </button>
+          </fieldset>
         </form>
 
         <aside className="space-y-6">

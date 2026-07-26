@@ -30,7 +30,7 @@ function ReviewNode({ node }: { node: PublicPolicyNode }) {
   return <article className="border-b border-border pb-4"><h3 className="text-sm font-semibold">{node.label}</h3><p className="mt-2 text-sm">{node.fact_label} {node.operator} <strong>{displayValue(node.expected_value)}</strong></p>{node.citation && <p className="mt-2 text-xs text-muted">Source: {node.citation}</p>}</article>;
 }
 
-export function PolicyReview() {
+export function PolicyReview({ canPublish }: { canPublish: boolean }) {
   const [reviews, setReviews] = useState<PendingPolicyReview[]>([]);
   const [review, setReview] = useState<PolicyReviewData | null>(null);
   const [version, setVersion] = useState('');
@@ -76,6 +76,7 @@ export function PolicyReview() {
   };
 
   const publish = async () => {
+    if (!canPublish) return;
     const hasApplicability = applicabilityAttribute.trim() || applicabilityValues.trim();
     if (!review || !version.trim() || !effectiveFrom || (hasApplicability && (!applicabilityAttribute.trim() || !applicabilityValues.trim()))) return;
     setPublishing(true);
@@ -107,14 +108,14 @@ export function PolicyReview() {
       </section>
       {publishedVersion ? <div role="status" className="flex items-start gap-2 border border-emerald-200 bg-emerald-50 px-3 py-3 text-sm text-emerald-800"><CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />Published as immutable release {publishedVersion}.</div> : <>
         <section className="space-y-5"><h3 className="text-base font-semibold">Policy conditions</h3><ReviewNode node={review.policy} /></section>
-        <section className="flex flex-wrap items-end gap-3 border-t border-border pt-6">
+        {canPublish ? <section className="flex flex-wrap items-end gap-3 border-t border-border pt-6">
           <label className="grid gap-2 text-sm font-medium">Release version<input aria-label="Release version" value={version} onChange={(event) => setVersion(event.target.value)} placeholder="2026.1" className="w-40 rounded border border-border px-3 py-2 font-normal outline-none focus:border-primary" /></label>
           <label className="grid gap-2 text-sm font-medium">Effective from<input aria-label="Effective from" type="date" value={effectiveFrom} onChange={(event) => setEffectiveFrom(event.target.value)} className="rounded border border-border px-3 py-2 font-normal outline-none focus:border-primary" /></label>
           <label className="grid gap-2 text-sm font-medium">Effective until<input aria-label="Effective until" type="date" value={effectiveUntil} onChange={(event) => setEffectiveUntil(event.target.value)} min={effectiveFrom || undefined} className="rounded border border-border px-3 py-2 font-normal outline-none focus:border-primary" /></label>
           <label className="grid gap-2 text-sm font-medium">Applies when<input aria-label="Applicability attribute" value={applicabilityAttribute} onChange={(event) => setApplicabilityAttribute(event.target.value)} placeholder="Entry year" className="w-36 rounded border border-border px-3 py-2 font-normal outline-none focus:border-primary" /></label>
           <label className="grid gap-2 text-sm font-medium">Matching values<input aria-label="Applicability values" value={applicabilityValues} onChange={(event) => setApplicabilityValues(event.target.value)} placeholder="2026, 2027" className="w-40 rounded border border-border px-3 py-2 font-normal outline-none focus:border-primary" /></label>
           <button type="button" onClick={() => void publish()} disabled={publishing || !version.trim() || !effectiveFrom || (Boolean(applicabilityAttribute.trim() || applicabilityValues.trim()) && (!applicabilityAttribute.trim() || !applicabilityValues.trim()))} className="inline-flex items-center gap-2 rounded bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary/90 disabled:opacity-40"><Send className="h-4 w-4" />{publishing ? 'Publishing...' : 'Approve and publish'}</button>
-        </section>
+        </section> : <p className="border-l-2 border-border pl-3 text-sm text-muted">This account may inspect pending policy conditions but cannot approve or publish a release.</p>}
       </>}
       {error && <div role="alert" className="flex items-start gap-2 border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />{error}</div>}
     </div>;

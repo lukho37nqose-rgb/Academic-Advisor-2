@@ -72,6 +72,7 @@ from app.infrastructure.edge_registry import (
     get_edge_registry,
 )
 from app.services.governance import get_role_permission_matrix
+from app.services.ui_capabilities import get_interface_capabilities
 from app.services.institutional_intake import (
     InstitutionalInputError,
     InstitutionalIntakeRequest,
@@ -567,6 +568,14 @@ def handbook_source_metadata(file_name: str, content_type: str) -> tuple[str, st
 
 # --- Endpoints ---
 
+
+@app.get("/api/v1/session/capabilities")
+async def get_session_capabilities(
+    user: UserIdentity = Depends(get_current_user),
+):
+    """Return the authenticated account's approved reference-client workspace."""
+    return get_interface_capabilities(user)
+
 @app.post("/api/v1/evidence", status_code=201)
 async def ingest_evidence(
     request: EvidenceIngestionRequest,
@@ -784,7 +793,12 @@ async def start_evaluation(
 @app.get("/api/v1/reasoning/{graph_id}")
 async def get_reasoning_graph(
     graph_id: str,
-    user: UserIdentity = Depends(get_current_user),
+    user: UserIdentity = Depends(require_role([
+        Role.SUBJECT,
+        Role.TENANT_ADMIN,
+        Role.ASSISTANCE_COORDINATOR,
+        Role.AUDITOR,
+    ])),
     db: AsyncSession = Depends(get_db_session)
 ):
     """
@@ -934,9 +948,12 @@ async def get_pending_policy_review(
 async def list_admin_domains(
     user: UserIdentity = Depends(require_role([
         Role.TENANT_ADMIN,
+        Role.METADATA_STEWARD,
         Role.ASSISTANCE_COORDINATOR,
         Role.RULE_AUTHOR,
         Role.RULE_APPROVER,
+        Role.POLICY_OWNER,
+        Role.AUDITOR,
     ])),
     db: AsyncSession = Depends(get_db_session),
 ):
@@ -1662,14 +1679,18 @@ async def update_decision_review(
 @app.get("/api/v1/admin/permissions")
 async def get_admin_permissions(
     domain_id: str,
-    user: UserIdentity = Depends(get_current_user),
+    user: UserIdentity = Depends(require_role([
+        Role.TENANT_ADMIN,
+        Role.METADATA_STEWARD,
+        Role.AUDITOR,
+    ])),
     registry: EdgeRegistry = Depends(get_edge_registry),
 ):
     """
     Returns the governance matrix and the selected domain's Edge-configured
     metadata surface.
-    This is intentionally public to authenticated users so UI clients can
-    explain why a field is editable, review-only, or governance-only.
+    It is limited to governance staff because it exposes the institution's
+    configured metadata surface and role matrix.
     """
     ensure_domain_access(user, domain_id)
     try:

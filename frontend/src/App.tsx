@@ -1,25 +1,58 @@
-import { useEffect, useState } from 'react';
-import { ReasoningGraphView } from './components/ReasoningGraphView';
-import { GovernanceDesk } from './components/GovernanceDesk';
-import { InstitutionalIntake } from './components/InstitutionalIntake';
-import { PublicPolicyGuide } from './components/PublicPolicyGuide';
+import { useEffect, useState, type ComponentType } from 'react';
 import { AssistanceInbox } from './components/AssistanceInbox';
-import { PolicyReview } from './components/PolicyReview';
-import { HandbookIntake } from './components/HandbookIntake';
 import { DecisionReviewInbox } from './components/DecisionReviewInbox';
+import { GovernanceDesk } from './components/GovernanceDesk';
+import { HandbookIntake } from './components/HandbookIntake';
+import { InstitutionalIntake } from './components/InstitutionalIntake';
 import { PolicyAmbiguityRegister } from './components/PolicyAmbiguityRegister';
+import { PolicyReview } from './components/PolicyReview';
+import { PublicPolicyGuide } from './components/PublicPolicyGuide';
+import { ReasoningGraphView } from './components/ReasoningGraphView';
 import { SystemRecordImport } from './components/SystemRecordImport';
-import { evaluateEvidence, fetchReasoningGraph } from './api/client';
-import type { ReasoningGraph } from './api/client';
-import { FileSearch, BookOpen, Building2, Settings, LayoutGrid, ShieldCheck, Inbox, ClipboardCheck, Files, MessageSquareWarning, Scale, TableProperties } from 'lucide-react';
+import { fetchReasoningGraph, fetchSessionCapabilities } from './api/client';
+import type { ReasoningGraph, SessionCapabilities } from './api/client';
+import {
+  Building2,
+  ClipboardCheck,
+  Files,
+  Inbox,
+  MessageSquareWarning,
+  Scale,
+  ShieldCheck,
+  TableProperties,
+  type LucideProps,
+} from 'lucide-react';
 
-type ActiveView = 'investigations' | 'governance' | 'institution_setup' | 'policy_guides' | 'assistance_inbox' | 'decision_review_inbox' | 'policy_review' | 'policy_ambiguities' | 'handbook_intake' | 'record_import';
+type ActiveView =
+  | 'governance'
+  | 'institution_setup'
+  | 'assistance_inbox'
+  | 'decision_review_inbox'
+  | 'policy_review'
+  | 'policy_ambiguities'
+  | 'handbook_intake'
+  | 'record_import';
+
+type NavigationItem = {
+  view: ActiveView;
+  label: string;
+  icon: ComponentType<LucideProps>;
+};
+
+const navigationItems: NavigationItem[] = [
+  { view: 'governance', label: 'Governance Desk', icon: ShieldCheck },
+  { view: 'institution_setup', label: 'Institution Setup', icon: Building2 },
+  { view: 'handbook_intake', label: 'Handbook Intake', icon: Files },
+  { view: 'record_import', label: 'System Records', icon: TableProperties },
+  { view: 'assistance_inbox', label: 'Assistance Inbox', icon: Inbox },
+  { view: 'decision_review_inbox', label: 'Review Cases', icon: MessageSquareWarning },
+  { view: 'policy_review', label: 'Policy Review', icon: ClipboardCheck },
+  { view: 'policy_ambiguities', label: 'Policy Register', icon: Scale },
+];
 
 const viewHeading: Record<ActiveView, [string, string]> = {
-  investigations: ['Investigations', 'Academic Standing Review'],
   governance: ['Governance Desk', 'Tier 1 Controls'],
   institution_setup: ['Institution Setup', 'Policy Draft'],
-  policy_guides: ['Policy Guides', 'Approved Policy'],
   assistance_inbox: ['Assistance Inbox', 'Human Follow-up'],
   decision_review_inbox: ['Decision Review', 'Casework'],
   policy_review: ['Policy Review', 'Release Approval'],
@@ -28,239 +61,138 @@ const viewHeading: Record<ActiveView, [string, string]> = {
   record_import: ['System Records', 'CSV Preview'],
 };
 
+function isActiveView(value: string): value is ActiveView {
+  return navigationItems.some((item) => item.view === value);
+}
+
+function errorMessage(error: unknown) {
+  const message = error as { message?: string };
+  return message.message || 'This decision could not be loaded.';
+}
+
 function App() {
+  const [capabilities, setCapabilities] = useState<SessionCapabilities | null>(null);
+  const [capabilityLoading, setCapabilityLoading] = useState(true);
+  const [capabilityError, setCapabilityError] = useState(false);
+  const [selectedView, setSelectedView] = useState<ActiveView>('governance');
   const [graph, setGraph] = useState<ReasoningGraph | null>(null);
-  const [activeView, setActiveView] = useState<ActiveView>('investigations');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [graphLoading, setGraphLoading] = useState(false);
+  const [graphError, setGraphError] = useState<string | null>(null);
+
   const searchParameters = new URLSearchParams(window.location.search);
-  const isSubjectExperience = searchParameters.get('experience') === 'subject';
+  const requestedSubjectExperience = searchParameters.get('experience') === 'subject';
   const requestedTraceId = searchParameters.get('trace');
 
   useEffect(() => {
-    if (!isSubjectExperience || !requestedTraceId) return;
-    setLoading(true);
-    setError(null);
-    void fetchReasoningGraph(requestedTraceId)
-      .then(setGraph)
-      .catch((requestError: unknown) => {
-        const message = requestError as { message?: string };
-        setError(message.message || 'The requested decision could not be loaded.');
+    let active = true;
+    fetchSessionCapabilities()
+      .then((response) => {
+        if (active) setCapabilities(response);
       })
-      .finally(() => setLoading(false));
-  }, [isSubjectExperience, requestedTraceId]);
+      .catch(() => {
+        if (active) setCapabilityError(true);
+      })
+      .finally(() => {
+        if (active) setCapabilityLoading(false);
+      });
+    return () => { active = false; };
+  }, []);
 
-  // In a real app, this would be a multi-step form. 
-  // For the sandbox, we trigger the demo evaluation flow.
-  const handleRunEvaluation = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      // 1. Trigger evaluate (using dummy evidence ID, assuming demo fallback logic)
-      const summary = await evaluateEvidence("demo_evidence", "mock_rule_graph", "student_123");
-      
-      // 2. Fetch the generated reasoning graph
-      const fullGraph = await fetchReasoningGraph(summary.reasoning_graph_id);
-      setGraph(fullGraph);
-    } catch (err: any) {
-      setError(err.message || "Failed to run evaluation");
-    } finally {
-      setLoading(false);
-    }
-  };
+  useEffect(() => {
+    if (capabilities?.experience !== 'subject' || !requestedTraceId) return;
+    let active = true;
+    setGraphLoading(true);
+    setGraphError(null);
+    void fetchReasoningGraph(requestedTraceId)
+      .then((response) => active && setGraph(response))
+      .catch((requestError: unknown) => active && setGraphError(errorMessage(requestError)))
+      .finally(() => active && setGraphLoading(false));
+    return () => { active = false; };
+  }, [capabilities?.experience, requestedTraceId]);
 
-  if (isSubjectExperience) {
+  if (capabilityLoading) {
+    return <main className="min-h-screen bg-white px-4 py-8 sm:px-8"><p className="mx-auto max-w-5xl text-sm text-muted">Checking account access...</p></main>;
+  }
+
+  if (capabilityError || !capabilities) {
+    return <main className="min-h-screen bg-white px-4 py-8 sm:px-8"><div role="alert" className="mx-auto max-w-5xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">We could not verify this account's access. Sign in again or contact your institution.</div></main>;
+  }
+
+  if (requestedSubjectExperience && capabilities.experience !== 'subject') {
+    return <main className="min-h-screen bg-white px-4 py-8 sm:px-8"><div role="alert" className="mx-auto max-w-5xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">This account is not permitted to open a subject decision view.</div></main>;
+  }
+
+  if (capabilities.experience === 'subject') {
     return (
       <main className="min-h-screen bg-white px-4 py-8 sm:px-8">
         <div className="mx-auto max-w-5xl">
           <header className="border-b border-border pb-5">
-            <h1 className="text-xl font-semibold">Decision review</h1>
+            <h1 className="text-xl font-semibold">{requestedTraceId ? 'Decision review' : 'Your institutional information'}</h1>
           </header>
-          {loading && <p className="py-8 text-sm text-muted">Loading your decision...</p>}
-          {error && <div role="alert" className="mt-6 border border-rose-200 bg-rose-50 px-3 py-3 text-sm text-rose-700">{error}</div>}
-          {!loading && !error && !graph && <p className="py-8 text-sm text-muted">No decision was selected.</p>}
-          {!loading && graph && <ReasoningGraphView graph={graph} showDecisionReview />}
+          {!requestedTraceId && <div className="py-6"><PublicPolicyGuide /></div>}
+          {requestedTraceId && graphLoading && <p className="py-8 text-sm text-muted">Loading your decision...</p>}
+          {requestedTraceId && graphError && <div role="alert" className="mt-6 border border-rose-200 bg-rose-50 px-3 py-3 text-sm text-rose-700">{graphError}</div>}
+          {requestedTraceId && !graphLoading && !graphError && !graph && <p className="py-8 text-sm text-muted">No decision was selected.</p>}
+          {requestedTraceId && !graphLoading && graph && <ReasoningGraphView graph={graph} showDecisionReview />}
         </div>
       </main>
     );
   }
 
+  const allowedViews = capabilities.allowed_views.filter(isActiveView);
+  const activeView = allowedViews.includes(selectedView) ? selectedView : allowedViews[0];
+  const allowedNavigation = navigationItems.filter((item) => allowedViews.includes(item.view));
+  const isTenantAdmin = capabilities.role === 'tenant_admin';
+  const canApplyQuickEdit = isTenantAdmin || capabilities.role === 'metadata_steward';
+  const canManageHandbook = isTenantAdmin || capabilities.role === 'rule_author';
+  const canManageAssistance = isTenantAdmin || capabilities.role === 'assistance_coordinator';
+  const canPublishPolicy = isTenantAdmin || capabilities.role === 'rule_approver';
+  const canRecordAmbiguity = isTenantAdmin || capabilities.role === 'rule_author' || capabilities.role === 'policy_owner';
+  const canResolveAmbiguity = isTenantAdmin || capabilities.role === 'policy_owner';
+
+  if (!activeView) {
+    return <main className="min-h-screen bg-white px-4 py-8 sm:px-8"><div role="alert" className="mx-auto max-w-5xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">This account does not have access to an operational workspace.</div></main>;
+  }
+
   return (
     <div className="flex h-screen bg-white">
-      {/* Sidebar */}
-      <aside className="w-64 border-r border-border flex flex-col">
-        <div className="p-6 border-b border-border">
-          <h1 className="text-lg font-semibold tracking-tight">Knowledge Studio</h1>
-          <p className="text-xs text-muted mt-1">Institutional Reasoning</p>
+      <aside className="flex w-64 flex-col border-r border-border">
+        <div className="border-b border-border p-6">
+          <h1 className="text-lg font-semibold tracking-normal">Knowledge Studio</h1>
+          <p className="mt-1 text-xs text-muted">{capabilities.role_label}</p>
         </div>
-        <nav className="flex-1 p-4 space-y-1">
-          <button
-            type="button"
-            onClick={() => setActiveView('investigations')}
-            className={`flex w-full items-center gap-3 rounded px-3 py-2 text-left text-sm font-medium transition-colors ${
-              activeView === 'investigations' ? 'bg-accent' : 'text-muted hover:bg-accent'
-            }`}
-          >
-            <FileSearch className="w-4 h-4 text-muted" />
-            Investigations
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveView('governance')}
-            className={`flex w-full items-center gap-3 rounded px-3 py-2 text-left text-sm font-medium transition-colors ${
-              activeView === 'governance' ? 'bg-accent' : 'text-muted hover:bg-accent'
-            }`}
-          >
-            <ShieldCheck className="w-4 h-4 text-muted" />
-            Governance Desk
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveView('institution_setup')}
-            className={`flex w-full items-center gap-3 rounded px-3 py-2 text-left text-sm font-medium transition-colors ${
-              activeView === 'institution_setup' ? 'bg-accent' : 'text-muted hover:bg-accent'
-            }`}
-          >
-            <Building2 className="w-4 h-4 text-muted" />
-            Institution Setup
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveView('handbook_intake')}
-            className={`flex w-full items-center gap-3 rounded px-3 py-2 text-left text-sm font-medium transition-colors ${
-              activeView === 'handbook_intake' ? 'bg-accent' : 'text-muted hover:bg-accent'
-            }`}
-          >
-            <Files className="w-4 h-4 text-muted" />
-            Handbook Intake
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveView('record_import')}
-            className={`flex w-full items-center gap-3 rounded px-3 py-2 text-left text-sm font-medium transition-colors ${
-              activeView === 'record_import' ? 'bg-accent' : 'text-muted hover:bg-accent'
-            }`}
-          >
-            <TableProperties className="w-4 h-4 text-muted" />
-            System Records
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveView('policy_guides')}
-            className={`flex w-full items-center gap-3 rounded px-3 py-2 text-left text-sm font-medium transition-colors ${
-              activeView === 'policy_guides' ? 'bg-accent' : 'text-muted hover:bg-accent'
-            }`}
-          >
-            <BookOpen className="w-4 h-4" />
-            Policy Guides
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveView('assistance_inbox')}
-            className={`flex w-full items-center gap-3 rounded px-3 py-2 text-left text-sm font-medium transition-colors ${
-              activeView === 'assistance_inbox' ? 'bg-accent' : 'text-muted hover:bg-accent'
-            }`}
-          >
-            <Inbox className="w-4 h-4" />
-            Assistance Inbox
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveView('decision_review_inbox')}
-            className={`flex w-full items-center gap-3 rounded px-3 py-2 text-left text-sm font-medium transition-colors ${
-              activeView === 'decision_review_inbox' ? 'bg-accent' : 'text-muted hover:bg-accent'
-            }`}
-          >
-            <MessageSquareWarning className="w-4 h-4" />
-            Review Cases
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveView('policy_review')}
-            className={`flex w-full items-center gap-3 rounded px-3 py-2 text-left text-sm font-medium transition-colors ${
-              activeView === 'policy_review' ? 'bg-accent' : 'text-muted hover:bg-accent'
-            }`}
-          >
-            <ClipboardCheck className="w-4 h-4" />
-            Policy Review
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveView('policy_ambiguities')}
-            className={`flex w-full items-center gap-3 rounded px-3 py-2 text-left text-sm font-medium transition-colors ${
-              activeView === 'policy_ambiguities' ? 'bg-accent' : 'text-muted hover:bg-accent'
-            }`}
-          >
-            <Scale className="w-4 h-4" />
-            Policy Register
-          </button>
-          <button type="button" className="flex w-full items-center gap-3 px-3 py-2 text-muted hover:bg-accent rounded text-left text-sm font-medium transition-colors">
-            <LayoutGrid className="w-4 h-4" />
-            Workflows
-          </button>
+        <nav aria-label="Institution workspace" className="flex-1 space-y-1 p-4">
+          {allowedNavigation.map(({ view, label, icon: Icon }) => (
+            <button
+              key={view}
+              type="button"
+              onClick={() => setSelectedView(view)}
+              className={`flex w-full items-center gap-3 rounded px-3 py-2 text-left text-sm font-medium transition-colors ${activeView === view ? 'bg-accent' : 'text-muted hover:bg-accent'}`}
+            >
+              <Icon className="h-4 w-4 text-muted" />
+              {label}
+            </button>
+          ))}
         </nav>
-        <div className="p-4 border-t border-border">
-          <button type="button" className="flex w-full items-center gap-3 px-3 py-2 text-muted hover:bg-accent rounded text-left text-sm font-medium transition-colors">
-            <Settings className="w-4 h-4" />
-            Settings
-          </button>
-        </div>
       </aside>
 
-      {/* Main Content */}
-      <main className="flex-1 flex flex-col overflow-hidden">
-        <header className="h-16 border-b border-border flex items-center justify-between px-8">
-           <div className="flex items-center gap-2 text-sm text-muted">
-             <span>{viewHeading[activeView][0]}</span>
-             <span>/</span>
-             <span className="text-primary font-medium">{viewHeading[activeView][1]}</span>
-           </div>
-           {activeView === 'investigations' && (
-             <button
-                onClick={handleRunEvaluation}
-                disabled={loading}
-                className="px-4 py-2 bg-primary text-white text-sm font-medium rounded hover:bg-primary/90 disabled:opacity-50 transition-colors"
-              >
-               {loading ? 'Evaluating...' : 'Begin Investigation'}
-             </button>
-           )}
+      <main className="flex flex-1 flex-col overflow-hidden">
+        <header className="flex h-16 items-center border-b border-border px-8">
+          <div className="flex items-center gap-2 text-sm text-muted">
+            <span>{viewHeading[activeView][0]}</span>
+            <span>/</span>
+            <span className="font-medium text-primary">{viewHeading[activeView][1]}</span>
+          </div>
         </header>
-        
         <div className="flex-1 overflow-y-auto p-8">
-           {activeView === 'investigations' && (
-             <>
-               {error && (
-                 <div className="max-w-4xl mx-auto p-4 bg-rose-50 text-rose-600 rounded border border-rose-200 mb-8">
-                   {error}
-                 </div>
-               )}
-
-               {!graph && !loading && !error && (
-                 <div className="h-full flex items-center justify-center">
-                   <div className="max-w-md text-center">
-                     <div className="w-16 h-16 bg-accent rounded flex items-center justify-center mx-auto mb-6">
-                        <FileSearch className="w-8 h-8 text-muted" />
-                     </div>
-                     <h2 className="text-xl font-semibold mb-2">No active trace</h2>
-                     <p className="text-muted text-sm leading-relaxed">
-                       Upload evidence and begin an investigation to see how the Institutional Engine applies policy rules to the facts.
-                     </p>
-                   </div>
-                 </div>
-               )}
-
-               {graph && <ReasoningGraphView graph={graph} />}
-             </>
-           )}
-           {activeView === 'governance' && <GovernanceDesk />}
-           {activeView === 'institution_setup' && <InstitutionalIntake />}
-           {activeView === 'policy_guides' && <PublicPolicyGuide />}
-           {activeView === 'assistance_inbox' && <AssistanceInbox />}
-           {activeView === 'decision_review_inbox' && <DecisionReviewInbox />}
-           {activeView === 'policy_review' && <PolicyReview />}
-           {activeView === 'policy_ambiguities' && <PolicyAmbiguityRegister />}
-           {activeView === 'handbook_intake' && <HandbookIntake />}
-           {activeView === 'record_import' && <SystemRecordImport />}
+          {activeView === 'governance' && <GovernanceDesk canApplyQuickEdit={canApplyQuickEdit} />}
+          {activeView === 'institution_setup' && <InstitutionalIntake />}
+          {activeView === 'assistance_inbox' && <AssistanceInbox canManage={canManageAssistance} />}
+          {activeView === 'decision_review_inbox' && <DecisionReviewInbox canManage={canManageAssistance} />}
+          {activeView === 'policy_review' && <PolicyReview canPublish={canPublishPolicy} />}
+          {activeView === 'policy_ambiguities' && <PolicyAmbiguityRegister canRecord={canRecordAmbiguity} canResolve={canResolveAmbiguity} />}
+          {activeView === 'handbook_intake' && <HandbookIntake canManageSource={canManageHandbook} />}
+          {activeView === 'record_import' && <SystemRecordImport />}
         </div>
       </main>
     </div>

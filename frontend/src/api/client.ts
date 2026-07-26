@@ -54,6 +54,13 @@ export interface ReasoningGraph {
     };
 }
 
+export interface SessionCapabilities {
+    experience: 'staff' | 'subject';
+    role: string;
+    role_label: string;
+    allowed_views: string[];
+}
+
 export interface QuickEditPayload {
     domain_id: string;
     target_type: string;
@@ -414,6 +421,11 @@ interface HandbookUploadSession {
 }
 
 // --- API Methods ---
+export const fetchSessionCapabilities = async (): Promise<SessionCapabilities> => {
+    const response = await apiClient.get<SessionCapabilities>('/session/capabilities');
+    return response.data;
+}
+
 export const evaluateEvidence = async (evidenceId: string, ruleGraphId: string, subjectId: string): Promise<EvaluationSummary> => {
     // Requires Idempotency-Key
     const idempotencyKey = `ui-${Date.now()}`;

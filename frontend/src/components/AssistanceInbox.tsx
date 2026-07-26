@@ -34,7 +34,7 @@ function formatDueAt(value?: string | null) {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
 }
 
-export function AssistanceInbox() {
+export function AssistanceInbox({ canManage }: { canManage: boolean }) {
   const [domains, setDomains] = useState<AdminDomain[]>([]);
   const [domainId, setDomainId] = useState('');
   const [requests, setRequests] = useState<SupportRequest[]>([]);
@@ -113,6 +113,8 @@ export function AssistanceInbox() {
         </label>
       </section>
 
+      {!canManage && <p className="border-l-2 border-border pl-3 text-sm text-muted">This account may inspect assistance casework but cannot change its status.</p>}
+
       {error && <div role="alert" className="flex items-start gap-2 border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />{error}</div>}
       {loading && <div className="flex items-center gap-2 py-8 text-sm text-muted"><LoaderCircle className="h-4 w-4 animate-spin" />Loading requests...</div>}
       {!loading && !error && !domainId && <p className="py-8 text-sm text-muted">No domains are assigned to this account.</p>}
@@ -143,7 +145,7 @@ export function AssistanceInbox() {
                     <select
                       aria-label={`Status for request ${request.id}`}
                       value={request.status}
-                      disabled={updatingId === request.id}
+                      disabled={!canManage || updatingId === request.id}
                       onChange={(event) => void updateStatus(request.id, event.target.value as SupportRequestStatus)}
                       className="w-36 rounded border border-border bg-white px-2 py-1.5 outline-none focus:border-primary disabled:bg-accent"
                     >

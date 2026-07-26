@@ -1,11 +1,39 @@
 import { test, expect, type Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 
-async function openApplication(page: Page) {
+type SessionCapabilities = {
+    experience: 'staff' | 'subject';
+    role: string;
+    role_label: string;
+    allowed_views: string[];
+};
+
+const tenantAdminSession: SessionCapabilities = {
+    experience: 'staff',
+    role: 'tenant_admin',
+    role_label: 'Tenant administrator',
+    allowed_views: ['governance', 'institution_setup', 'handbook_intake', 'record_import', 'assistance_inbox', 'decision_review_inbox', 'policy_review', 'policy_ambiguities'],
+};
+
+const subjectSession: SessionCapabilities = {
+    experience: 'subject',
+    role: 'subject',
+    role_label: 'Subject',
+    allowed_views: ['policy_guides'],
+};
+
+async function mockSessionCapabilities(page: Page, session: SessionCapabilities) {
+    await page.route('**/api/v1/session/capabilities', async route => {
+        await route.fulfill({ json: session });
+    });
+}
+
+async function openApplication(page: Page, session = tenantAdminSession) {
+    await mockSessionCapabilities(page, session);
     for (let attempt = 0; attempt < 2; attempt += 1) {
         await page.goto('/', { waitUntil: 'domcontentloaded' });
         try {
-            await expect(page.getByRole('button', { name: 'Investigations' })).toBeVisible({ timeout: 5_000 });
+            await expect(page.getByRole('navigation', { name: 'Institution workspace' })).toBeVisible({ timeout: 5_000 });
             return;
         } catch (error) {
             if (attempt === 1) throw error;
@@ -40,30 +68,38 @@ const mockGraphManualReview = {
     edges: []
 };
 
-test.describe('Reasoning Graph Observability Dashboard', () => {
-
-    test('should render empty state initially', async ({ page }) => {
+test.describe('Workspace access boundaries', () => {
+    test('shows a tenant administrator only approved operational pages', async ({ page }) => {
         await openApplication(page);
-        await expect(page.getByText('No active trace')).toBeVisible();
+        await expect(page.getByRole('button', { name: 'Governance Desk' })).toBeVisible();
+        await expect(page.getByRole('button', { name: 'System Records' })).toBeVisible();
+        await expect(page.getByRole('button', { name: 'Investigations' })).toHaveCount(0);
     });
 
-    test('should successfully evaluate and render an ELIGIBLE graph', async ({ page }) => {
-        // Intercept API calls
-        await page.route('**/api/v1/evaluate', async route => {
-            const json = { decision: "ELIGIBLE", overall_confidence: 1.0, reasoning_graph_id: "trace_1", release_version: "1.0" };
-            await route.fulfill({ json });
+    test('hides staff navigation from a subject account', async ({ page }) => {
+        await mockSessionCapabilities(page, subjectSession);
+        await page.goto('/', { waitUntil: 'domcontentloaded' });
+        await expect(page.getByRole('heading', { name: 'Your institutional information' })).toBeVisible();
+        await expect(page.getByRole('navigation', { name: 'Institution workspace' })).toHaveCount(0);
+        await expect(page.getByRole('button', { name: 'Governance Desk' })).toHaveCount(0);
+    });
+
+    test('shows a metadata steward only the governance workspace', async ({ page }) => {
+        await openApplication(page, {
+            experience: 'staff', role: 'metadata_steward', role_label: 'Metadata steward', allowed_views: ['governance'],
         });
-        
+        await expect(page.getByRole('button', { name: 'Governance Desk' })).toBeVisible();
+        await expect(page.getByRole('button', { name: 'System Records' })).toHaveCount(0);
+        await expect(page.getByRole('button', { name: 'Policy Review' })).toHaveCount(0);
+    });
+
+    test('renders an eligible trace only through the subject experience', async ({ page }) => {
         await page.route('**/api/v1/reasoning/trace_1', async route => {
             await route.fulfill({ json: mockGraphEligible });
         });
+        await mockSessionCapabilities(page, subjectSession);
+        await page.goto('/?experience=subject&trace=trace_1', { waitUntil: 'domcontentloaded' });
 
-        await openApplication(page);
-        
-        // Trigger evaluation
-        await page.getByRole('button', { name: 'Begin Investigation' }).click();
-
-        // Verify Graph renders correctly
         await expect(page.getByText('Final Conclusion')).toBeVisible();
         await expect(page.getByRole('heading', { name: 'Eligible' })).toBeVisible();
         await expect(page.getByText('Confidence Score: 100.0%')).toBeVisible();
@@ -73,23 +109,13 @@ test.describe('Reasoning Graph Observability Dashboard', () => {
         await expect(page.getByText('Check GPA')).toBeVisible();
     });
 
-    test('should render a NEEDS_MANUAL_REVIEW graph', async ({ page }) => {
-        // Intercept API calls
-        await page.route('**/api/v1/evaluate', async route => {
-            const json = { decision: "NEEDS_MANUAL_REVIEW", overall_confidence: 0.5, reasoning_graph_id: "trace_2", release_version: "1.0" };
-            await route.fulfill({ json });
-        });
-        
+    test('renders a manual-review trace only through the subject experience', async ({ page }) => {
         await page.route('**/api/v1/reasoning/trace_2', async route => {
             await route.fulfill({ json: mockGraphManualReview });
         });
+        await mockSessionCapabilities(page, subjectSession);
+        await page.goto('/?experience=subject&trace=trace_2', { waitUntil: 'domcontentloaded' });
 
-        await openApplication(page);
-        
-        // Trigger evaluation
-        await page.getByRole('button', { name: 'Begin Investigation' }).click();
-
-        // Verify Graph renders correctly for manual review
         await expect(page.getByRole('heading', { name: 'Needs Manual Review' })).toBeVisible();
         await expect(page.getByText('Confidence Score: 50.0%')).toBeVisible();
         await expect(page.getByText('needs_human_review')).toBeVisible();
@@ -128,6 +154,7 @@ test.describe('Subject Decision Review', () => {
             });
         });
 
+        await mockSessionCapabilities(page, subjectSession);
         await page.goto('/?experience=subject&trace=trace_subject', { waitUntil: 'domcontentloaded' });
         await expect(page.getByRole('heading', { name: 'Decision review' })).toBeVisible();
         await page.getByRole('checkbox', { name: 'academic.gpa' }).check();
@@ -149,6 +176,7 @@ test.describe('Subject Decision Review', () => {
             await route.fulfill({ json: { items: [] } });
         });
 
+        await mockSessionCapabilities(page, subjectSession);
         await page.goto('/?experience=subject&trace=trace_accessible', { waitUntil: 'domcontentloaded' });
         await expect(page.getByRole('heading', { name: 'Request a decision review' })).toBeVisible();
 
@@ -397,8 +425,8 @@ test.describe('Institutional Input And Public Access', () => {
             await route.fulfill({ status: 202, json: { request_id: 'support_1', status: 'OPEN' } });
         });
 
-        await openApplication(page);
-        await page.getByRole('button', { name: 'Policy Guides' }).click();
+        await mockSessionCapabilities(page, subjectSession);
+        await page.goto('/', { waitUntil: 'domcontentloaded' });
         await page.getByRole('button', { name: /Student Support Eligibility/ }).click();
         await expect(page.getByText('This guide explains the approved policy. It does not decide an individual case.')).toBeVisible();
         await expect(page.getByText('Support Policy 2026, section 2.1')).toBeVisible();
