@@ -50,7 +50,10 @@ def build_sbom(requirements: Path) -> dict[str, object]:
     for component in parse_lock(requirements):
         name = str(component["name"])
         version = str(component["version"])
-        hashes = component["hashes"]
+        hash_values = component["hashes"]
+        if not isinstance(hash_values, list) or not all(isinstance(value, str) for value in hash_values):
+            raise RuntimeError("Locked dependency hashes must be strings.")
+        hashes = [str(value) for value in hash_values]
         components.append(
             {
                 "type": "library",
