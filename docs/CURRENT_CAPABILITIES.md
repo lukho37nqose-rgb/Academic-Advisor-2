@@ -25,6 +25,13 @@ The system can define and independently approve a CSV mapping for a
 system-of-record export, then check a file against that mapping. It does not
 import the CSV into institutional records or write back to any external system.
 
+Staff can also create a shadow-calibration suite without writing code or JSON.
+It compares synthetic representative cases, or privacy-approved de-identified
+historical cases, with one signed policy release. A different staff member must
+certify the suite before it can run. The comparison produces an immutable report
+of matches and mismatches; it cannot alter a subject record, a policy release,
+or an operative institutional decision.
+
 People governed by a decision can view an approved public policy guide, open a
 human-assistance request where enabled, and request a review of their own
 decision trace. Their trace view presents the current policy position, the
@@ -45,10 +52,10 @@ role, tenant, domain, and subject-ownership check.
 | Subject | Public policy guide; their own personal policy-position view | View how the common approved policy applies to their own authorised trace; request assistance or a review where the institution enabled it. |
 | Metadata steward | Governance Desk | Apply only pre-configured low-risk metadata edits in assigned domains. |
 | Assistance coordinator | Assistance Inbox; Review Cases | Triage assistance and decision-review case statuses in assigned domains. |
-| Policy author | Handbook Intake; System Records; Policy Register | Upload/review source material, submit mapping configurations, record policy ambiguities, and use the draft API. Cannot approve releases. |
-| Release approver | Handbook Intake; System Records; Policy Review; Policy Register | Inspect source material, independently review mappings, inspect ambiguities, and approve a release. Cannot upload or revise a handbook source. |
-| Policy owner | Policy Register | Record or resolve documented interpretations with an authoritative source. A person cannot resolve their own ambiguity record. |
-| Auditor | Governance Desk; Handbook Intake; System Records; Assistance Inbox; Policy Review; Policy Register | Read-only inspection of configured controls, source material, mapping records, casework, policy review, and interpretation records. |
+| Policy author | Handbook Intake; System Records; Policy Register; Shadow Calibration | Upload/review source material, submit mapping configurations, record policy ambiguities, prepare non-identifying calibration suites, and use the draft API. Cannot approve releases or certify their own calibration suite. |
+| Release approver | Handbook Intake; System Records; Policy Review; Policy Register; Shadow Calibration | Inspect source material, independently review mappings and calibration cases, inspect ambiguities, and approve a release. Cannot upload or revise a handbook source. |
+| Policy owner | Policy Register; Shadow Calibration | Record or resolve documented interpretations with an authoritative source; independently certify a calibration suite and classify its mismatches. A person cannot resolve their own ambiguity record or calibration suite. |
+| Auditor | Governance Desk; Handbook Intake; System Records; Assistance Inbox; Policy Review; Policy Register; Shadow Calibration | Read-only inspection of configured controls, source material, mapping records, casework, policy review, interpretation records, and calibration reports. |
 | Tenant administrator | All staff pages | Break-glass administration across the tenant. The release and mapping workflows still enforce separation of duties. |
 
 The former demo `Begin Investigation` control is deliberately not presented in
@@ -59,8 +66,9 @@ owns the evidence; a real operational evaluation flow is still to be built.
 
 ## Controls that are implemented
 
-- Deterministic evaluation of compiled policy rules. AI may help at extraction
-  or explanation boundaries, but it does not decide the outcome.
+- Deterministic evaluation and trace-bound explanation of compiled policy rules.
+  Automated extraction remains untrusted source assistance, not policy logic or
+  an outcome decision.
 - Policy drafts are compiled before storage, approved by a different identity,
   released immutably, cryptographically signed, and versioned with effective
   dates and applicability selectors.
@@ -74,6 +82,10 @@ owns the evidence; a real operational evaluation flow is still to be built.
 - System-record mapping configuration is immutable after submission, has an
   append-only event history, and requires an independent reviewer before it is
   approved.
+- Shadow-calibration suites are tenant and domain scoped, immutable after
+  submission, independently certified, and recorded as a single immutable
+  non-operative run. The author cannot certify their own suite or classify its
+  mismatches.
 - Public assistance has rate limiting, retention fields, and an offline or
   assisted-route configuration. Decision-review cases are subject-owned and
   append their lifecycle history.
@@ -92,6 +104,10 @@ owns the evidence; a real operational evaluation flow is still to be built.
   notification service.
 - It does not perform a live system-of-record import, automated handbook-to-
   rule conversion, or external workflow write-back.
+- It does not detect all personal information entered by a staff member. Its
+  calibration route therefore accepts only non-identifying case references and
+  requires institutional privacy approval before de-identified historical data
+  is used.
 - It does not substitute for institutional policy interpretation, legal review,
   accessibility review, retention approval, or a named human decision owner.
 - Recovery drills, monitoring, backup restoration, penetration testing, and

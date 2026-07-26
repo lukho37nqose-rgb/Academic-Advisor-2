@@ -8,6 +8,7 @@ import { PolicyAmbiguityRegister } from './components/PolicyAmbiguityRegister';
 import { PolicyReview } from './components/PolicyReview';
 import { PublicPolicyGuide } from './components/PublicPolicyGuide';
 import { SubjectPositionView } from './components/SubjectPositionView';
+import { ShadowCalibration } from './components/ShadowCalibration';
 import { SystemRecordImport } from './components/SystemRecordImport';
 import { fetchReasoningGraph, fetchSessionCapabilities } from './api/client';
 import type { ReasoningGraph, SessionCapabilities } from './api/client';
@@ -20,6 +21,7 @@ import {
   Scale,
   ShieldCheck,
   TableProperties,
+  TestTube2,
   type LucideProps,
 } from 'lucide-react';
 
@@ -31,7 +33,8 @@ type ActiveView =
   | 'policy_review'
   | 'policy_ambiguities'
   | 'handbook_intake'
-  | 'record_import';
+  | 'record_import'
+  | 'shadow_calibration';
 
 type NavigationItem = {
   view: ActiveView;
@@ -48,6 +51,7 @@ const navigationItems: NavigationItem[] = [
   { view: 'decision_review_inbox', label: 'Review Cases', icon: MessageSquareWarning },
   { view: 'policy_review', label: 'Policy Review', icon: ClipboardCheck },
   { view: 'policy_ambiguities', label: 'Policy Register', icon: Scale },
+  { view: 'shadow_calibration', label: 'Shadow Calibration', icon: TestTube2 },
 ];
 
 const viewHeading: Record<ActiveView, [string, string]> = {
@@ -59,6 +63,7 @@ const viewHeading: Record<ActiveView, [string, string]> = {
   policy_ambiguities: ['Policy Register', 'Interpretations'],
   handbook_intake: ['Handbook Intake', 'Source Verification'],
   record_import: ['System Records', 'CSV Preview'],
+  shadow_calibration: ['Shadow Calibration', 'Non-operative Comparison'],
 };
 
 function isActiveView(value: string): value is ActiveView {
@@ -149,6 +154,9 @@ function App() {
   const canPublishPolicy = isTenantAdmin || capabilities.role === 'rule_approver';
   const canRecordAmbiguity = isTenantAdmin || capabilities.role === 'rule_author' || capabilities.role === 'policy_owner';
   const canResolveAmbiguity = isTenantAdmin || capabilities.role === 'policy_owner';
+  const canCreateCalibration = isTenantAdmin || capabilities.role === 'rule_author';
+  const canCertifyCalibration = isTenantAdmin || capabilities.role === 'rule_approver' || capabilities.role === 'policy_owner';
+  const canResolveCalibrationMismatch = isTenantAdmin || capabilities.role === 'rule_approver' || capabilities.role === 'policy_owner';
 
   if (!activeView) {
     return <main className="min-h-screen bg-white px-4 py-8 sm:px-8"><div role="alert" className="mx-auto max-w-5xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">This account does not have access to an operational workspace.</div></main>;
@@ -193,6 +201,7 @@ function App() {
           {activeView === 'policy_ambiguities' && <PolicyAmbiguityRegister canRecord={canRecordAmbiguity} canResolve={canResolveAmbiguity} />}
           {activeView === 'handbook_intake' && <HandbookIntake canManageSource={canManageHandbook} />}
           {activeView === 'record_import' && <SystemRecordImport />}
+          {activeView === 'shadow_calibration' && <ShadowCalibration canCreate={canCreateCalibration} canCertify={canCertifyCalibration} canResolveMismatch={canResolveCalibrationMismatch} />}
         </div>
       </main>
     </div>

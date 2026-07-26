@@ -45,8 +45,9 @@ Evidence
   -> citation-bound explanation
 ```
 
-LLMs are quarantined to extraction and explanation. They do not resolve policy
-logic or determine outcomes.
+Automated extraction is treated as untrusted source assistance. Policy logic,
+evaluation, and the explanation bound to an evaluation trace are deterministic;
+no model resolves policy logic or determines an outcome.
 
 ## Proven In The Current Prototype
 
@@ -58,6 +59,9 @@ The actual API path has demonstrated:
 - compilation and cryptographic signing of the resulting release;
 - evaluation against that release;
 - the same evaluator operating across curriculum and grant domains.
+- an independently certified shadow-calibration suite compared with a signed
+  release, recording both matches and a classified mismatch without changing an
+  institutional record or decision.
 
 This establishes that the domain-neutral mechanism and governance gate work
 under the tested conditions.
@@ -86,8 +90,9 @@ policy sources and representative evidence, then:
 
 1. model the policy through the governed draft/release path;
 2. establish citations and supersession rules;
-3. evaluate known cases, including edge cases and prior decisions;
-4. compare outputs with institutional decision owners;
+3. independently certify a non-identifying shadow-calibration suite containing
+   known cases, including edge cases and prior decisions;
+4. compare its outputs with institutional decision owners;
 5. record disagreements as model, evidence, or governance failures;
 6. measure extraction correction burden and explanation usefulness.
 

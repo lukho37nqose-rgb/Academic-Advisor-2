@@ -12,7 +12,7 @@ const tenantAdminSession: SessionCapabilities = {
     experience: 'staff',
     role: 'tenant_admin',
     role_label: 'Tenant administrator',
-    allowed_views: ['governance', 'institution_setup', 'handbook_intake', 'record_import', 'assistance_inbox', 'decision_review_inbox', 'policy_review', 'policy_ambiguities'],
+    allowed_views: ['governance', 'institution_setup', 'handbook_intake', 'record_import', 'assistance_inbox', 'decision_review_inbox', 'policy_review', 'policy_ambiguities', 'shadow_calibration'],
 };
 
 const subjectSession: SessionCapabilities = {
@@ -82,6 +82,7 @@ test.describe('Workspace access boundaries', () => {
         await openApplication(page);
         await expect(page.getByRole('button', { name: 'Governance Desk' })).toBeVisible();
         await expect(page.getByRole('button', { name: 'System Records' })).toBeVisible();
+        await expect(page.getByRole('button', { name: 'Shadow Calibration' })).toBeVisible();
         await expect(page.getByRole('button', { name: 'Investigations' })).toHaveCount(0);
     });
 
@@ -100,6 +101,38 @@ test.describe('Workspace access boundaries', () => {
         await expect(page.getByRole('button', { name: 'Governance Desk' })).toBeVisible();
         await expect(page.getByRole('button', { name: 'System Records' })).toHaveCount(0);
         await expect(page.getByRole('button', { name: 'Policy Review' })).toHaveCount(0);
+        await expect(page.getByRole('button', { name: 'Shadow Calibration' })).toHaveCount(0);
+    });
+
+    async function mockCalibrationWorkspace(page: Page) {
+        await page.route('**/api/v1/admin/domains', async route => {
+            await route.fulfill({ json: { items: [{ domain_id: 'dom_calibration', domain_name: 'Progression' }] } });
+        });
+        await page.route('**/api/v1/governance/domains/dom_calibration/calibration-releases', async route => {
+            await route.fulfill({ json: { items: [] } });
+        });
+        await page.route('**/api/v1/governance/shadow-calibrations**', async route => {
+            await route.fulfill({ json: { items: [] } });
+        });
+    }
+
+    test('lets a policy author prepare a shadow-calibration suite', async ({ page }) => {
+        await mockCalibrationWorkspace(page);
+        await page.route('**/api/v1/admin/domains/dom_calibration/record-import-fields', async route => {
+            await route.fulfill({ json: { items: [] } });
+        });
+        await openApplication(page, {
+            experience: 'staff', role: 'rule_author', role_label: 'Policy author', allowed_views: ['shadow_calibration'],
+        });
+        await expect(page.getByRole('button', { name: 'New suite' })).toBeVisible();
+    });
+
+    test('keeps shadow calibration audit-only for an auditor', async ({ page }) => {
+        await mockCalibrationWorkspace(page);
+        await openApplication(page, {
+            experience: 'staff', role: 'auditor', role_label: 'Auditor', allowed_views: ['shadow_calibration'],
+        });
+        await expect(page.getByRole('button', { name: 'New suite' })).toHaveCount(0);
     });
 
     test('renders a personal view of how the common policy applies to an eligible trace', async ({ page }) => {

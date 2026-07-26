@@ -345,6 +345,128 @@ class DBSystemRecordImportMappingEvent(Base):
     note = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
+
+class DBShadowCalibrationSuite(Base):
+    """A non-operative comparison of a signed release with recorded outcomes."""
+    __tablename__ = 'shadow_calibration_suites'
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('SUBMITTED', 'CERTIFIED', 'COMPLETED')",
+            name='ck_shadow_calibration_suite_status',
+        ),
+        CheckConstraint(
+            "data_basis IN ('SYNTHETIC', 'APPROVED_DEIDENTIFIED')",
+            name='ck_shadow_calibration_suite_data_basis',
+        ),
+    )
+
+    id = Column(String, primary_key=True)
+    tenant_id = Column(String, ForeignKey('tenants.id'), nullable=False, index=True)
+    domain_id = Column(String, ForeignKey('domains.id'), nullable=False, index=True)
+    release_id = Column(String, ForeignKey('releases.id'), nullable=False, index=True)
+    name = Column(String, nullable=False)
+    description = Column(Text, nullable=False)
+    data_basis = Column(String, nullable=False)
+    privacy_approval_reference = Column(String, nullable=True)
+    policy_as_of_date = Column(Date, nullable=False)
+    author_id = Column(String, nullable=False)
+    status = Column(String, nullable=False, default="SUBMITTED", index=True)
+    input_sha256 = Column(String, nullable=False)
+    certified_by = Column(String, nullable=True)
+    certification_note = Column(Text, nullable=True)
+    certified_at = Column(DateTime(timezone=True), nullable=True)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class DBShadowCalibrationCase(Base):
+    """One non-identifying representative case, immutable after submission."""
+    __tablename__ = 'shadow_calibration_cases'
+    __table_args__ = (
+        UniqueConstraint('suite_id', 'case_reference', name='uq_shadow_calibration_case_reference'),
+        CheckConstraint(
+            "recorded_decision IN ('ELIGIBLE', 'INELIGIBLE', 'NEEDS_MANUAL_REVIEW')",
+            name='ck_shadow_calibration_case_recorded_decision',
+        ),
+    )
+
+    id = Column(String, primary_key=True)
+    suite_id = Column(String, ForeignKey('shadow_calibration_suites.id'), nullable=False, index=True)
+    tenant_id = Column(String, nullable=False, index=True)
+    domain_id = Column(String, nullable=False, index=True)
+    case_reference = Column(String, nullable=False)
+    description = Column(Text, nullable=False)
+    recorded_decision = Column(String, nullable=False)
+    recorded_outcome_reference = Column(Text, nullable=False)
+    facts = Column(JSONType, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class DBShadowCalibrationSuiteEvent(Base):
+    """Append-only evidence for submission, certification, and completion."""
+    __tablename__ = 'shadow_calibration_suite_events'
+    __table_args__ = (
+        UniqueConstraint('suite_id', 'sequence', name='uq_shadow_calibration_suite_event_sequence'),
+        CheckConstraint(
+            "event_type IN ('SUBMITTED', 'CERTIFIED', 'COMPLETED')",
+            name='ck_shadow_calibration_suite_event_type',
+        ),
+    )
+
+    id = Column(String, primary_key=True)
+    suite_id = Column(String, ForeignKey('shadow_calibration_suites.id'), nullable=False, index=True)
+    tenant_id = Column(String, nullable=False, index=True)
+    domain_id = Column(String, nullable=False, index=True)
+    sequence = Column(Integer, nullable=False)
+    event_type = Column(String, nullable=False)
+    actor_id = Column(String, nullable=False)
+    note = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class DBShadowCalibrationRun(Base):
+    """The single immutable report produced from one certified calibration suite."""
+    __tablename__ = 'shadow_calibration_runs'
+
+    id = Column(String, primary_key=True)
+    suite_id = Column(String, ForeignKey('shadow_calibration_suites.id'), nullable=False, unique=True, index=True)
+    tenant_id = Column(String, nullable=False, index=True)
+    domain_id = Column(String, nullable=False, index=True)
+    release_id = Column(String, ForeignKey('releases.id'), nullable=False)
+    report = Column(JSONType, nullable=False)
+    report_sha256 = Column(String, nullable=False)
+    executed_by = Column(String, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class DBShadowCalibrationFinding(Base):
+    """A mismatch that requires a named institutional interpretation."""
+    __tablename__ = 'shadow_calibration_findings'
+    __table_args__ = (
+        UniqueConstraint('run_id', 'case_id', name='uq_shadow_calibration_finding_case'),
+        CheckConstraint("status IN ('OPEN', 'RESOLVED')", name='ck_shadow_calibration_finding_status'),
+        CheckConstraint(
+            "classification IN ('SOURCE_DATA', 'POLICY_MODEL', 'EVIDENCE', 'GOVERNANCE') OR classification IS NULL",
+            name='ck_shadow_calibration_finding_classification',
+        ),
+    )
+
+    id = Column(String, primary_key=True)
+    run_id = Column(String, ForeignKey('shadow_calibration_runs.id'), nullable=False, index=True)
+    case_id = Column(String, ForeignKey('shadow_calibration_cases.id'), nullable=False, index=True)
+    tenant_id = Column(String, nullable=False, index=True)
+    domain_id = Column(String, nullable=False, index=True)
+    expected_decision = Column(String, nullable=False)
+    actual_decision = Column(String, nullable=False)
+    input_sha256 = Column(String, nullable=False)
+    trace_sha256 = Column(String, nullable=False)
+    status = Column(String, nullable=False, default="OPEN", index=True)
+    classification = Column(String, nullable=True)
+    resolution_note = Column(Text, nullable=True)
+    resolved_by = Column(String, nullable=True)
+    resolved_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
 class DBRelease(Base):
     __tablename__ = 'releases'
     __table_args__ = (

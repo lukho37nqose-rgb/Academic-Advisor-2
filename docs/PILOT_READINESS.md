@@ -1,10 +1,12 @@
 # Real Institutional Pilot Readiness
 
-For the first proposed UCT case study, apply the additional controls in
+For a first proposed institutional case study, apply the additional controls in
 [UCT_PILOT_CHARTER.md](UCT_PILOT_CHARTER.md) and
-[UCT_THREAT_MODEL.md](UCT_THREAT_MODEL.md). Those documents do not claim UCT
-approval or affiliation; they define the material and institutional sign-off
-required before a real source or record is used.
+[UCT_THREAT_MODEL.md](UCT_THREAT_MODEL.md) when UCT is the candidate. Those
+documents do not claim UCT approval or affiliation; they define the material
+and institutional sign-off required before a real source or record is used.
+The controls are tenant-neutral and must be adapted for every future
+institution.
 
 The next phase is not a broader demo. It is a bounded test of whether the IRE
 can represent one real institutional decision faithfully and explain it to the
@@ -20,9 +22,11 @@ failure, and human-review routing paths, and retains canonical SHA-256 evidence
 for each case.
 
 This is useful for engineering regression control and a dry-run of the pilot
-method. It is not evidence that any real policy has been modelled correctly. A
-real corpus and historical outcomes remain institutional inputs, subject to the
-controls below.
+method. The staff workspace also supports an independently certified
+shadow-calibration suite for the same purpose without requiring an institution
+to prepare JSON or write code. It is not evidence that any real policy has been
+modelled correctly. A real corpus and historical outcomes remain institutional
+inputs, subject to the controls below.
 
 ## Institutional Inputs Required
 
@@ -31,8 +35,9 @@ controls below.
 2. A named policy owner and a separate release approver.
 3. The authoritative policy corpus, including amendments, effective dates,
    superseded versions, and source citations.
-4. A privacy-approved set of representative evidence and historic decisions,
-   including difficult and disputed cases.
+4. A privacy-approved set of synthetic representative cases or de-identified
+   historic decisions, including difficult and disputed cases. The calibration
+   route must never include direct subject identifiers.
 5. A written definition of the subject, tenant, and domain access boundaries.
 6. An OIDC application registration that supplies an issuer, audience, JWKS URL,
    and claims for tenant, role, and domain assignments.
@@ -59,3 +64,5 @@ The pilot is successful only when the policy owner can reproduce a sample of
 known decisions using a signed release, explain each outcome through the stored
 evidence, claims, facts, and rule citations, and identify every disagreement as
 either a source-data problem, policy-model problem, or governance decision.
+The comparison must be recorded as a shadow-calibration report before any
+operative use is considered.

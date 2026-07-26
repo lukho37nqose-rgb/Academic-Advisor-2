@@ -8,13 +8,13 @@ from app.services.auth import Role, UserIdentity, get_current_user
 
 
 _EXPECTED_WORKSPACES: dict[Role, tuple[str, list[str]]] = {
-    Role.TENANT_ADMIN: ("staff", ["governance", "institution_setup", "handbook_intake", "record_import", "assistance_inbox", "decision_review_inbox", "policy_review", "policy_ambiguities"]),
+    Role.TENANT_ADMIN: ("staff", ["governance", "institution_setup", "handbook_intake", "record_import", "assistance_inbox", "decision_review_inbox", "policy_review", "policy_ambiguities", "shadow_calibration"]),
     Role.METADATA_STEWARD: ("staff", ["governance"]),
     Role.ASSISTANCE_COORDINATOR: ("staff", ["assistance_inbox", "decision_review_inbox"]),
-    Role.RULE_AUTHOR: ("staff", ["handbook_intake", "record_import", "policy_ambiguities"]),
-    Role.RULE_APPROVER: ("staff", ["handbook_intake", "record_import", "policy_review", "policy_ambiguities"]),
-    Role.POLICY_OWNER: ("staff", ["policy_ambiguities"]),
-    Role.AUDITOR: ("staff", ["governance", "handbook_intake", "record_import", "assistance_inbox", "policy_review", "policy_ambiguities"]),
+    Role.RULE_AUTHOR: ("staff", ["handbook_intake", "record_import", "policy_ambiguities", "shadow_calibration"]),
+    Role.RULE_APPROVER: ("staff", ["handbook_intake", "record_import", "policy_review", "policy_ambiguities", "shadow_calibration"]),
+    Role.POLICY_OWNER: ("staff", ["policy_ambiguities", "shadow_calibration"]),
+    Role.AUDITOR: ("staff", ["governance", "handbook_intake", "record_import", "assistance_inbox", "policy_review", "policy_ambiguities", "shadow_calibration"]),
     Role.SUBJECT: ("subject", ["policy_guides"]),
 }
 

@@ -30,6 +30,11 @@ from app.infrastructure.db import (
     DBMetadataOverride,
     DBSystemRecordImportMapping,
     DBSystemRecordImportMappingEvent,
+    DBShadowCalibrationCase,
+    DBShadowCalibrationFinding,
+    DBShadowCalibrationRun,
+    DBShadowCalibrationSuite,
+    DBShadowCalibrationSuiteEvent,
     DBRelease,
     DBRuleGraph,
     DBReasoningGraph,
@@ -142,6 +147,10 @@ class BackgroundJobConflictError(ValueError):
 
 class SystemRecordImportMappingConflictError(ValueError):
     """Raised when a mapping review would violate its governance lifecycle."""
+
+
+class ShadowCalibrationConflictError(ValueError):
+    """Raised when a non-operative calibration workflow violates its lifecycle."""
 
 
 class MetadataGovernanceRepository:
@@ -602,6 +611,447 @@ class SystemRecordImportMappingRepository:
         await self.session.commit()
         await self.session.refresh(record)
         return self._payload(record)
+
+
+class ShadowCalibrationRepository:
+    """Stores governed, non-operative comparisons against a signed release."""
+
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    @staticmethod
+    def _as_utc(value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+    @staticmethod
+    def _canonical_sha256(value: Any) -> str:
+        serialized = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+        return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+    @classmethod
+    def _suite_payload(cls, row: DBShadowCalibrationSuite, release_version: str, case_count: int) -> dict[str, Any]:
+        return {
+            "suite_id": cast(str, row.id),
+            "domain_id": cast(str, row.domain_id),
+            "release_id": cast(str, row.release_id),
+            "release_version": release_version,
+            "name": cast(str, row.name),
+            "description": cast(str, row.description),
+            "data_basis": cast(str, row.data_basis),
+            "privacy_approval_reference": cast(Optional[str], row.privacy_approval_reference),
+            "policy_as_of_date": row.policy_as_of_date.isoformat(),
+            "author_id": cast(str, row.author_id),
+            "status": cast(str, row.status),
+            "input_sha256": cast(str, row.input_sha256),
+            "certified_by": cast(Optional[str], row.certified_by),
+            "certification_note": cast(Optional[str], row.certification_note),
+            "certified_at": row.certified_at.isoformat() if row.certified_at else None,
+            "completed_at": row.completed_at.isoformat() if row.completed_at else None,
+            "case_count": case_count,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        }
+
+    @staticmethod
+    def _case_payload(row: DBShadowCalibrationCase) -> dict[str, Any]:
+        return {
+            "case_id": cast(str, row.id),
+            "case_reference": cast(str, row.case_reference),
+            "description": cast(str, row.description),
+            "recorded_decision": cast(str, row.recorded_decision),
+            "recorded_outcome_reference": cast(str, row.recorded_outcome_reference),
+            "facts": cast(list[dict[str, Any]], row.facts),
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        }
+
+    @classmethod
+    def _run_payload(cls, row: DBShadowCalibrationRun) -> dict[str, Any]:
+        return {
+            "run_id": cast(str, row.id),
+            "report": cast(dict[str, Any], row.report),
+            "report_sha256": cast(str, row.report_sha256),
+            "executed_by": cast(str, row.executed_by),
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        }
+
+    @classmethod
+    def _finding_payload(cls, row: DBShadowCalibrationFinding, case_reference: str) -> dict[str, Any]:
+        resolved_at = cls._as_utc(cast(Optional[datetime], row.resolved_at))
+        return {
+            "finding_id": cast(str, row.id),
+            "case_id": cast(str, row.case_id),
+            "case_reference": case_reference,
+            "expected_decision": cast(str, row.expected_decision),
+            "actual_decision": cast(str, row.actual_decision),
+            "input_sha256": cast(str, row.input_sha256),
+            "trace_sha256": cast(str, row.trace_sha256),
+            "status": cast(str, row.status),
+            "classification": cast(Optional[str], row.classification),
+            "resolution_note": cast(Optional[str], row.resolution_note),
+            "resolved_by": cast(Optional[str], row.resolved_by),
+            "resolved_at": resolved_at.isoformat() if resolved_at else None,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        }
+
+    async def create_suite(
+        self,
+        *,
+        suite_id: str,
+        tenant_id: str,
+        domain_id: str,
+        release_id: str,
+        name: str,
+        description: str,
+        data_basis: str,
+        privacy_approval_reference: Optional[str],
+        policy_as_of_date: date,
+        author_id: str,
+        cases: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        input_snapshot = {
+            "release_id": release_id,
+            "name": name,
+            "description": description,
+            "data_basis": data_basis,
+            "privacy_approval_reference": privacy_approval_reference,
+            "policy_as_of_date": policy_as_of_date.isoformat(),
+            "cases": cases,
+        }
+        suite = DBShadowCalibrationSuite(
+            id=suite_id,
+            tenant_id=tenant_id,
+            domain_id=domain_id,
+            release_id=release_id,
+            name=name,
+            description=description,
+            data_basis=data_basis,
+            privacy_approval_reference=privacy_approval_reference,
+            policy_as_of_date=policy_as_of_date,
+            author_id=author_id,
+            status="SUBMITTED",
+            input_sha256=self._canonical_sha256(input_snapshot),
+        )
+        self.session.add(suite)
+        for case in cases:
+            self.session.add(
+                DBShadowCalibrationCase(
+                    id=case["id"],
+                    suite_id=suite_id,
+                    tenant_id=tenant_id,
+                    domain_id=domain_id,
+                    case_reference=case["case_reference"],
+                    description=case["description"],
+                    recorded_decision=case["recorded_decision"],
+                    recorded_outcome_reference=case["recorded_outcome_reference"],
+                    facts=case["facts"],
+                )
+            )
+        self.session.add(
+            DBShadowCalibrationSuiteEvent(
+                id="calibration_event_" + uuid.uuid4().hex,
+                suite_id=suite_id,
+                tenant_id=tenant_id,
+                domain_id=domain_id,
+                sequence=1,
+                event_type="SUBMITTED",
+                actor_id=author_id,
+                note="Submitted for independent calibration certification.",
+            )
+        )
+        try:
+            await self.session.commit()
+        except IntegrityError as exc:
+            await self.session.rollback()
+            raise ShadowCalibrationConflictError("The calibration suite could not be recorded.") from exc
+        return self._suite_payload(suite, "", len(cases))
+
+    async def list_suites(
+        self,
+        *,
+        tenant_id: str,
+        domain_id: str,
+    ) -> list[dict[str, Any]]:
+        result = await self.session.execute(
+            select(DBShadowCalibrationSuite, DBRelease.version, func.count(DBShadowCalibrationCase.id))
+            .join(DBRelease, DBRelease.id == DBShadowCalibrationSuite.release_id)
+            .outerjoin(DBShadowCalibrationCase, DBShadowCalibrationCase.suite_id == DBShadowCalibrationSuite.id)
+            .where(
+                DBShadowCalibrationSuite.tenant_id == tenant_id,
+                DBShadowCalibrationSuite.domain_id == domain_id,
+            )
+            .group_by(DBShadowCalibrationSuite.id, DBRelease.version)
+            .order_by(DBShadowCalibrationSuite.created_at.desc(), DBShadowCalibrationSuite.id)
+        )
+        return [
+            self._suite_payload(suite, cast(str, version), cast(int, case_count))
+            for suite, version, case_count in result.all()
+        ]
+
+    async def get_suite(
+        self,
+        *,
+        suite_id: str,
+        tenant_id: str,
+        domain_id: str,
+    ) -> Optional[dict[str, Any]]:
+        suite_result = await self.session.execute(
+            select(DBShadowCalibrationSuite, DBRelease.version)
+            .join(DBRelease, DBRelease.id == DBShadowCalibrationSuite.release_id)
+            .where(
+                DBShadowCalibrationSuite.id == suite_id,
+                DBShadowCalibrationSuite.tenant_id == tenant_id,
+                DBShadowCalibrationSuite.domain_id == domain_id,
+            )
+        )
+        row = suite_result.first()
+        if row is None:
+            return None
+        suite, release_version = row
+        case_rows = (
+            await self.session.execute(
+                select(DBShadowCalibrationCase)
+                .where(DBShadowCalibrationCase.suite_id == suite_id)
+                .order_by(DBShadowCalibrationCase.case_reference)
+            )
+        ).scalars().all()
+        event_rows = (
+            await self.session.execute(
+                select(DBShadowCalibrationSuiteEvent)
+                .where(DBShadowCalibrationSuiteEvent.suite_id == suite_id)
+                .order_by(DBShadowCalibrationSuiteEvent.sequence)
+            )
+        ).scalars().all()
+        run_row = (
+            await self.session.execute(
+                select(DBShadowCalibrationRun).where(DBShadowCalibrationRun.suite_id == suite_id)
+            )
+        ).scalars().first()
+        findings: list[dict[str, Any]] = []
+        if run_row is not None:
+            finding_rows = await self.session.execute(
+                select(DBShadowCalibrationFinding, DBShadowCalibrationCase.case_reference)
+                .join(DBShadowCalibrationCase, DBShadowCalibrationCase.id == DBShadowCalibrationFinding.case_id)
+                .where(DBShadowCalibrationFinding.run_id == run_row.id)
+                .order_by(DBShadowCalibrationFinding.created_at, DBShadowCalibrationFinding.id)
+            )
+            findings = [
+                self._finding_payload(finding, cast(str, case_reference))
+                for finding, case_reference in finding_rows.all()
+            ]
+        return {
+            **self._suite_payload(suite, cast(str, release_version), len(case_rows)),
+            "cases": [self._case_payload(case) for case in case_rows],
+            "events": [
+                {
+                    "event_type": cast(str, event.event_type),
+                    "actor_id": cast(str, event.actor_id),
+                    "note": cast(Optional[str], event.note),
+                    "created_at": event.created_at.isoformat() if event.created_at else None,
+                }
+                for event in event_rows
+            ],
+            "run": self._run_payload(run_row) if run_row else None,
+            "findings": findings,
+        }
+
+    async def certification_input(
+        self,
+        *,
+        suite_id: str,
+        tenant_id: str,
+        domain_id: str,
+    ) -> Optional[dict[str, Any]]:
+        detail = await self.get_suite(suite_id=suite_id, tenant_id=tenant_id, domain_id=domain_id)
+        return detail
+
+    async def certify_suite(
+        self,
+        *,
+        suite_id: str,
+        tenant_id: str,
+        domain_id: str,
+        actor_id: str,
+        note: str,
+    ) -> Optional[dict[str, Any]]:
+        result = await self.session.execute(
+            select(DBShadowCalibrationSuite)
+            .where(
+                DBShadowCalibrationSuite.id == suite_id,
+                DBShadowCalibrationSuite.tenant_id == tenant_id,
+                DBShadowCalibrationSuite.domain_id == domain_id,
+            )
+            .with_for_update()
+        )
+        suite = result.scalars().first()
+        if suite is None:
+            return None
+        if suite.status != "SUBMITTED":
+            raise ShadowCalibrationConflictError("Only a submitted calibration suite can be certified.")
+        if suite.author_id == actor_id:
+            raise ShadowCalibrationConflictError("The suite author cannot certify their own calibration inputs.")
+        now = datetime.now(timezone.utc)
+        setattr(suite, "status", "CERTIFIED")
+        setattr(suite, "certified_by", actor_id)
+        setattr(suite, "certification_note", note)
+        setattr(suite, "certified_at", now)
+        self.session.add(
+            DBShadowCalibrationSuiteEvent(
+                id="calibration_event_" + uuid.uuid4().hex,
+                suite_id=suite_id,
+                tenant_id=tenant_id,
+                domain_id=domain_id,
+                sequence=2,
+                event_type="CERTIFIED",
+                actor_id=actor_id,
+                note=note,
+            )
+        )
+        await self.session.commit()
+        return await self.get_suite(suite_id=suite_id, tenant_id=tenant_id, domain_id=domain_id)
+
+    async def record_run(
+        self,
+        *,
+        suite_id: str,
+        tenant_id: str,
+        domain_id: str,
+        actor_id: str,
+        report: dict[str, Any],
+    ) -> dict[str, Any]:
+        result = await self.session.execute(
+            select(DBShadowCalibrationSuite)
+            .where(
+                DBShadowCalibrationSuite.id == suite_id,
+                DBShadowCalibrationSuite.tenant_id == tenant_id,
+                DBShadowCalibrationSuite.domain_id == domain_id,
+            )
+            .with_for_update()
+        )
+        suite = result.scalars().first()
+        if suite is None:
+            raise ShadowCalibrationConflictError("Calibration suite was not found.")
+        if suite.status != "CERTIFIED":
+            raise ShadowCalibrationConflictError("Only a certified calibration suite can run in shadow mode.")
+        existing_run = await self.session.scalar(
+            select(DBShadowCalibrationRun.id).where(DBShadowCalibrationRun.suite_id == suite_id)
+        )
+        if existing_run is not None:
+            raise ShadowCalibrationConflictError("This calibration suite already has an immutable run report.")
+
+        cases = (
+            await self.session.execute(
+                select(DBShadowCalibrationCase).where(DBShadowCalibrationCase.suite_id == suite_id)
+            )
+        ).scalars().all()
+        cases_by_id = {cast(str, case.id): case for case in cases}
+        run_id = "calibration_run_" + uuid.uuid4().hex
+        self.session.add(
+            DBShadowCalibrationRun(
+                id=run_id,
+                suite_id=suite_id,
+                tenant_id=tenant_id,
+                domain_id=domain_id,
+                release_id=suite.release_id,
+                report=report,
+                report_sha256=self._canonical_sha256(report),
+                executed_by=actor_id,
+            )
+        )
+        reported_cases = report.get("cases")
+        if not isinstance(reported_cases, list):
+            raise ShadowCalibrationConflictError("Calibration report did not contain case results.")
+        reported_case_ids = [item.get("id") for item in reported_cases if isinstance(item, dict)]
+        if (
+            len(reported_cases) != len(cases_by_id)
+            or len(reported_case_ids) != len(cases_by_id)
+            or len(set(reported_case_ids)) != len(reported_case_ids)
+            or set(reported_case_ids) != set(cases_by_id)
+        ):
+            raise ShadowCalibrationConflictError("Calibration report did not match its immutable case set.")
+        for result_item in reported_cases:
+            if not isinstance(result_item, dict):
+                raise ShadowCalibrationConflictError("Calibration report contained an invalid case result.")
+            case_id = result_item.get("id")
+            case = cases_by_id.get(case_id) if isinstance(case_id, str) else None
+            if case is None:
+                raise ShadowCalibrationConflictError("Calibration report did not match its immutable case set.")
+            if result_item.get("passed") is False:
+                self.session.add(
+                    DBShadowCalibrationFinding(
+                        id="calibration_finding_" + uuid.uuid4().hex,
+                        run_id=run_id,
+                        case_id=case_id,
+                        tenant_id=tenant_id,
+                        domain_id=domain_id,
+                        expected_decision=result_item["expected_decision"],
+                        actual_decision=result_item["actual_decision"],
+                        input_sha256=result_item["input_sha256"],
+                        trace_sha256=result_item["trace_sha256"],
+                        status="OPEN",
+                    )
+                )
+        setattr(suite, "status", "COMPLETED")
+        setattr(suite, "completed_at", datetime.now(timezone.utc))
+        self.session.add(
+            DBShadowCalibrationSuiteEvent(
+                id="calibration_event_" + uuid.uuid4().hex,
+                suite_id=suite_id,
+                tenant_id=tenant_id,
+                domain_id=domain_id,
+                sequence=3,
+                event_type="COMPLETED",
+                actor_id=actor_id,
+                note="Shadow calibration report recorded. It does not create an operative decision.",
+            )
+        )
+        try:
+            await self.session.commit()
+        except IntegrityError as exc:
+            await self.session.rollback()
+            raise ShadowCalibrationConflictError("The calibration run could not be recorded.") from exc
+        run = await self.session.get(DBShadowCalibrationRun, run_id)
+        if run is None:
+            raise ShadowCalibrationConflictError("Calibration run was not available after recording.")
+        return self._run_payload(run)
+
+    async def resolve_finding(
+        self,
+        *,
+        finding_id: str,
+        tenant_id: str,
+        domain_id: str,
+        actor_id: str,
+        classification: str,
+        note: str,
+    ) -> Optional[dict[str, Any]]:
+        result = await self.session.execute(
+            select(DBShadowCalibrationFinding, DBShadowCalibrationSuite, DBShadowCalibrationCase.case_reference)
+            .join(DBShadowCalibrationRun, DBShadowCalibrationRun.id == DBShadowCalibrationFinding.run_id)
+            .join(DBShadowCalibrationSuite, DBShadowCalibrationSuite.id == DBShadowCalibrationRun.suite_id)
+            .join(DBShadowCalibrationCase, DBShadowCalibrationCase.id == DBShadowCalibrationFinding.case_id)
+            .where(
+                DBShadowCalibrationFinding.id == finding_id,
+                DBShadowCalibrationFinding.tenant_id == tenant_id,
+                DBShadowCalibrationFinding.domain_id == domain_id,
+            )
+            .with_for_update()
+        )
+        row = result.first()
+        if row is None:
+            return None
+        finding, suite, case_reference = row
+        if finding.status != "OPEN":
+            raise ShadowCalibrationConflictError("Only an open calibration mismatch can be classified.")
+        if suite.author_id == actor_id:
+            raise ShadowCalibrationConflictError("The suite author cannot classify their own calibration mismatch.")
+        setattr(finding, "status", "RESOLVED")
+        setattr(finding, "classification", classification)
+        setattr(finding, "resolution_note", note)
+        setattr(finding, "resolved_by", actor_id)
+        setattr(finding, "resolved_at", datetime.now(timezone.utc))
+        await self.session.commit()
+        return self._finding_payload(finding, cast(str, case_reference))
 
 
 class BackgroundJobRepository:
@@ -2281,19 +2731,9 @@ class ReleaseRepository:
     
     def __init__(self, session: AsyncSession):
         self.session = session
-        
-    async def get_release(self, domain_id: str, version: str) -> Optional[Release]:
-        """Fetches the Release definition from the database."""
-        result = await self.session.execute(
-            select(DBRelease).where(
-                DBRelease.domain_id == domain_id,
-                DBRelease.version == version
-            )
-        )
-        db_release = result.scalars().first()
-        if not db_release:
-            return None
-            
+
+    @staticmethod
+    def _release_from_row(db_release: DBRelease) -> Release:
         return Release(
             id=cast(str, db_release.id),
             domain_id=cast(str, db_release.domain_id),
@@ -2308,6 +2748,32 @@ class ReleaseRepository:
             effective_until=cast(Optional[date], db_release.effective_until),
             applicability=cast(Dict[str, List[str]], db_release.applicability or {}),
         )
+
+    async def get_release(self, domain_id: str, version: str) -> Optional[Release]:
+        """Fetches the Release definition from the database."""
+        result = await self.session.execute(
+            select(DBRelease).where(
+                DBRelease.domain_id == domain_id,
+                DBRelease.version == version
+            )
+        )
+        db_release = result.scalars().first()
+        if not db_release:
+            return None
+        return self._release_from_row(db_release)
+
+    async def get_release_by_id(self, release_id: str) -> Optional[Release]:
+        result = await self.session.execute(select(DBRelease).where(DBRelease.id == release_id))
+        db_release = result.scalars().first()
+        return self._release_from_row(db_release) if db_release else None
+
+    async def list_domain_releases(self, domain_id: str) -> list[Release]:
+        result = await self.session.execute(
+            select(DBRelease)
+            .where(DBRelease.domain_id == domain_id)
+            .order_by(DBRelease.effective_from.desc(), DBRelease.created_at.desc(), DBRelease.version.desc())
+        )
+        return [self._release_from_row(row) for row in result.scalars().all()]
 
     @staticmethod
     def _periods_overlap(

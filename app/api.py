@@ -47,6 +47,8 @@ from app.infrastructure.repositories import (
     ReleaseVersionConflictError,
     ReasoningRepository,
     ReleaseRepository,
+    ShadowCalibrationConflictError,
+    ShadowCalibrationRepository,
     SystemRecordImportMappingConflictError,
     SystemRecordImportMappingRepository,
     acquire_domain_governance_lock,
@@ -88,6 +90,15 @@ from app.services.institutional_intake import (
 from app.services.access_controls import (
     enforce_public_support_rate_limit,
 )
+from app.services.shadow_calibration import (
+    ShadowCalibrationCertificationRequest,
+    ShadowCalibrationFindingResolutionRequest,
+    ShadowCalibrationRunRequest,
+    ShadowCalibrationSuiteInput,
+    build_rehearsal_suite,
+    validate_cases_against_domain_fields,
+)
+from app.sdk.pilot_rehearsal import run_pilot_rehearsal
 from app.services.ocr_provider import is_configured as ocr_provider_is_configured
 from app.infrastructure.telemetry import Telemetry, reset_request_id, set_request_id
 from app.services.production_readiness import validate_production_readiness
@@ -1000,6 +1011,273 @@ async def list_record_import_fields(
     if fields is None:
         raise HTTPException(status_code=404, detail="Decision domain was not found.")
     return {"items": fields}
+
+
+async def _verified_calibration_release(
+    *,
+    repository: ReleaseRepository,
+    release_id: str,
+    domain_id: str,
+) -> tuple[Release, RuleGraph]:
+    """Calibration only compares cases against a cryptographically verifiable release."""
+    release = await repository.get_release_by_id(release_id)
+    if release is None or release.domain_id != domain_id:
+        raise HTTPException(status_code=404, detail="Approved policy release was not found for this domain.")
+    compiled_rule_graph = await repository.get_compiled_rule_graph(release.rule_graph_id)
+    if compiled_rule_graph is None:
+        raise HTTPException(status_code=409, detail="The approved policy release has no compiled rule graph.")
+    valid, reason = verify_release_bundle(release, compiled_rule_graph)
+    if not valid:
+        raise HTTPException(
+            status_code=409,
+            detail=f"This release cannot be used for shadow calibration: {reason}.",
+        )
+    return release, compiled_rule_graph
+
+
+@app.get("/api/v1/governance/domains/{domain_id}/calibration-releases")
+async def list_calibration_releases(
+    domain_id: str,
+    user: UserIdentity = Depends(require_role([
+        Role.TENANT_ADMIN,
+        Role.RULE_AUTHOR,
+        Role.RULE_APPROVER,
+        Role.POLICY_OWNER,
+        Role.AUDITOR,
+    ])),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Lists releases and makes their calibration eligibility visible before selection."""
+    ensure_domain_access(user, domain_id)
+    repository = ReleaseRepository(db)
+    items = []
+    for release in await repository.list_domain_releases(domain_id):
+        compiled_rule_graph = await repository.get_compiled_rule_graph(release.rule_graph_id)
+        valid, reason = verify_release_bundle(release, compiled_rule_graph)
+        items.append({
+            "release_id": release.id,
+            "version": release.version,
+            "effective_from": release.effective_from.isoformat() if release.effective_from else None,
+            "effective_until": release.effective_until.isoformat() if release.effective_until else None,
+            "calibration_ready": valid,
+            "calibration_blocker": None if valid else reason,
+        })
+    return {"items": items}
+
+
+@app.post("/api/v1/governance/shadow-calibrations", status_code=201)
+async def create_shadow_calibration(
+    request: ShadowCalibrationSuiteInput,
+    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.RULE_AUTHOR])),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Submits immutable representative cases for independent shadow calibration."""
+    ensure_domain_access(user, request.domain_id)
+    fields = await InstitutionalInputRepository(db).list_domain_fact_fields(
+        tenant_id=user.tenant_id,
+        domain_id=request.domain_id,
+    )
+    if fields is None:
+        raise HTTPException(status_code=404, detail="Decision domain was not found.")
+    try:
+        validate_cases_against_domain_fields(request.cases, fields)
+        await _verified_calibration_release(
+            repository=ReleaseRepository(db),
+            release_id=request.release_id,
+            domain_id=request.domain_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    suite_id = "calibration_suite_" + uuid.uuid4().hex
+    cases = [
+        {
+            "id": "calibration_case_" + uuid.uuid4().hex,
+            "case_reference": case.case_reference,
+            "description": case.description,
+            "recorded_decision": case.recorded_decision,
+            "recorded_outcome_reference": case.recorded_outcome_reference,
+            "facts": [fact.model_dump() for fact in case.facts],
+        }
+        for case in request.cases
+    ]
+    repository = ShadowCalibrationRepository(db)
+    try:
+        await repository.create_suite(
+            suite_id=suite_id,
+            tenant_id=user.tenant_id,
+            domain_id=request.domain_id,
+            release_id=request.release_id,
+            name=request.name,
+            description=request.description,
+            data_basis=request.data_basis,
+            privacy_approval_reference=request.privacy_approval_reference,
+            policy_as_of_date=request.policy_as_of_date,
+            author_id=user.user_id,
+            cases=cases,
+        )
+    except ShadowCalibrationConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    suite = await repository.get_suite(
+        suite_id=suite_id,
+        tenant_id=user.tenant_id,
+        domain_id=request.domain_id,
+    )
+    if suite is None:
+        raise HTTPException(status_code=409, detail="Calibration suite could not be loaded after submission.")
+    return suite
+
+
+@app.get("/api/v1/governance/shadow-calibrations")
+async def list_shadow_calibrations(
+    domain_id: str,
+    user: UserIdentity = Depends(require_role([
+        Role.TENANT_ADMIN,
+        Role.RULE_AUTHOR,
+        Role.RULE_APPROVER,
+        Role.POLICY_OWNER,
+        Role.AUDITOR,
+    ])),
+    db: AsyncSession = Depends(get_db_session),
+):
+    ensure_domain_access(user, domain_id)
+    return {
+        "items": await ShadowCalibrationRepository(db).list_suites(
+            tenant_id=user.tenant_id,
+            domain_id=domain_id,
+        )
+    }
+
+
+@app.get("/api/v1/governance/shadow-calibrations/{suite_id}")
+async def get_shadow_calibration(
+    suite_id: str,
+    domain_id: str,
+    user: UserIdentity = Depends(require_role([
+        Role.TENANT_ADMIN,
+        Role.RULE_AUTHOR,
+        Role.RULE_APPROVER,
+        Role.POLICY_OWNER,
+        Role.AUDITOR,
+    ])),
+    db: AsyncSession = Depends(get_db_session),
+):
+    ensure_domain_access(user, domain_id)
+    suite = await ShadowCalibrationRepository(db).get_suite(
+        suite_id=suite_id,
+        tenant_id=user.tenant_id,
+        domain_id=domain_id,
+    )
+    if suite is None:
+        raise HTTPException(status_code=404, detail="Shadow calibration suite was not found.")
+    return suite
+
+
+@app.post("/api/v1/governance/shadow-calibrations/{suite_id}/certify")
+async def certify_shadow_calibration(
+    suite_id: str,
+    request: ShadowCalibrationCertificationRequest,
+    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.RULE_APPROVER, Role.POLICY_OWNER])),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Requires an independent institutional role to certify the comparison inputs."""
+    ensure_domain_access(user, request.domain_id)
+    try:
+        suite = await ShadowCalibrationRepository(db).certify_suite(
+            suite_id=suite_id,
+            tenant_id=user.tenant_id,
+            domain_id=request.domain_id,
+            actor_id=user.user_id,
+            note=request.note,
+        )
+    except ShadowCalibrationConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if suite is None:
+        raise HTTPException(status_code=404, detail="Shadow calibration suite was not found.")
+    return suite
+
+
+@app.post("/api/v1/governance/shadow-calibrations/{suite_id}/run")
+async def run_shadow_calibration(
+    suite_id: str,
+    request: ShadowCalibrationRunRequest,
+    user: UserIdentity = Depends(require_role([
+        Role.TENANT_ADMIN,
+        Role.RULE_AUTHOR,
+        Role.RULE_APPROVER,
+        Role.POLICY_OWNER,
+    ])),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Runs a certified suite in memory and stores only a shadow comparison report."""
+    ensure_domain_access(user, request.domain_id)
+    repository = ShadowCalibrationRepository(db)
+    suite = await repository.get_suite(
+        suite_id=suite_id,
+        tenant_id=user.tenant_id,
+        domain_id=request.domain_id,
+    )
+    if suite is None:
+        raise HTTPException(status_code=404, detail="Shadow calibration suite was not found.")
+    try:
+        release, _ = await _verified_calibration_release(
+            repository=ReleaseRepository(db),
+            release_id=cast(str, suite["release_id"]),
+            domain_id=request.domain_id,
+        )
+        signed_policy = release.signed_payload.get("policy")
+        if not isinstance(signed_policy, dict):
+            raise ValueError("The verified release has no signed policy payload.")
+        rehearsal_suite = build_rehearsal_suite(
+            suite_id=cast(str, suite["suite_id"]),
+            tenant_id=user.tenant_id,
+            domain_id=request.domain_id,
+            release_id=release.id,
+            release_version=release.version,
+            policy_as_of_date=date.fromisoformat(cast(str, suite["policy_as_of_date"])),
+            description=cast(str, suite["description"]),
+            cases=cast(list[dict[str, Any]], suite["cases"]),
+            evaluation_timestamp=datetime.now(timezone.utc).isoformat(),
+        )
+        report = run_pilot_rehearsal(signed_policy, rehearsal_suite).model_dump(mode="json")
+        run = await repository.record_run(
+            suite_id=suite_id,
+            tenant_id=user.tenant_id,
+            domain_id=request.domain_id,
+            actor_id=user.user_id,
+            report=report,
+        )
+    except (ShadowCalibrationConflictError, ValueError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {
+        "run": run,
+        "message": "Shadow calibration completed. No institutional record or operative decision was changed.",
+    }
+
+
+@app.patch("/api/v1/governance/shadow-calibration-findings/{finding_id}")
+async def resolve_shadow_calibration_finding(
+    finding_id: str,
+    request: ShadowCalibrationFindingResolutionRequest,
+    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.POLICY_OWNER, Role.RULE_APPROVER])),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Classifies a mismatch without changing its source case, release, or report."""
+    ensure_domain_access(user, request.domain_id)
+    try:
+        finding = await ShadowCalibrationRepository(db).resolve_finding(
+            finding_id=finding_id,
+            tenant_id=user.tenant_id,
+            domain_id=request.domain_id,
+            actor_id=user.user_id,
+            classification=request.classification,
+            note=request.note,
+        )
+    except ShadowCalibrationConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if finding is None:
+        raise HTTPException(status_code=404, detail="Shadow calibration mismatch was not found.")
+    return finding
 
 
 @app.post("/api/v1/admin/system-record-imports/preview")

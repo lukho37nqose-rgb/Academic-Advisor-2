@@ -26,7 +26,7 @@ def test_session_capabilities_expose_only_workspace_routing_information():
         "experience": "staff",
         "role": "rule_author",
         "role_label": "Policy author",
-        "allowed_views": ["handbook_intake", "record_import", "policy_ambiguities"],
+        "allowed_views": ["handbook_intake", "record_import", "policy_ambiguities", "shadow_calibration"],
     }
 
 

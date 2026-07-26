@@ -100,7 +100,7 @@ class ReasoningGraph(BaseModel):
     nodes: Dict[str, GraphNode] = Field(default_factory=dict)
     edges: List[GraphEdge] = Field(default_factory=list)
     evaluation_context: Optional[EvaluationContext] = None
-    # LLM-polished, citation-bound prose explanation of this trace. Always
+    # Deterministic, citation-bound prose explanation of this trace. Always
     # generated AFTER the deterministic decision exists — never influences it.
     explanation: Optional[str] = None
     

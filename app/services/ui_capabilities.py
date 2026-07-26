@@ -43,13 +43,14 @@ _STAFF_VIEWS: dict[Role, tuple[str, ...]] = {
         "decision_review_inbox",
         "policy_review",
         "policy_ambiguities",
+        "shadow_calibration",
     ),
     Role.METADATA_STEWARD: ("governance",),
     Role.ASSISTANCE_COORDINATOR: ("assistance_inbox", "decision_review_inbox"),
-    Role.RULE_AUTHOR: ("handbook_intake", "record_import", "policy_ambiguities"),
-    Role.RULE_APPROVER: ("handbook_intake", "record_import", "policy_review", "policy_ambiguities"),
-    Role.POLICY_OWNER: ("policy_ambiguities",),
-    Role.AUDITOR: ("governance", "handbook_intake", "record_import", "assistance_inbox", "policy_review", "policy_ambiguities"),
+    Role.RULE_AUTHOR: ("handbook_intake", "record_import", "policy_ambiguities", "shadow_calibration"),
+    Role.RULE_APPROVER: ("handbook_intake", "record_import", "policy_review", "policy_ambiguities", "shadow_calibration"),
+    Role.POLICY_OWNER: ("policy_ambiguities", "shadow_calibration"),
+    Role.AUDITOR: ("governance", "handbook_intake", "record_import", "assistance_inbox", "policy_review", "policy_ambiguities", "shadow_calibration"),
 }
 
 

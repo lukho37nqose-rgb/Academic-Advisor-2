@@ -223,6 +223,117 @@ export interface RecordImportField {
     schema_type: 'string' | 'number' | 'boolean';
 }
 
+export type CalibrationDecision = 'ELIGIBLE' | 'INELIGIBLE' | 'NEEDS_MANUAL_REVIEW';
+export type CalibrationDataBasis = 'SYNTHETIC' | 'APPROVED_DEIDENTIFIED';
+export type CalibrationSuiteStatus = 'SUBMITTED' | 'CERTIFIED' | 'COMPLETED';
+export type CalibrationFindingClassification = 'SOURCE_DATA' | 'POLICY_MODEL' | 'EVIDENCE' | 'GOVERNANCE';
+
+export interface CalibrationRelease {
+    release_id: string;
+    version: string;
+    effective_from?: string | null;
+    effective_until?: string | null;
+    calibration_ready: boolean;
+    calibration_blocker?: string | null;
+}
+
+export interface ShadowCalibrationFactInput {
+    target_path: string;
+    value: string | number | boolean;
+    status?: 'resolved' | 'needs_human_review';
+}
+
+export interface ShadowCalibrationCaseInput {
+    case_reference: string;
+    description: string;
+    recorded_decision: CalibrationDecision;
+    recorded_outcome_reference: string;
+    facts: ShadowCalibrationFactInput[];
+}
+
+export interface ShadowCalibrationSuiteInput {
+    domain_id: string;
+    release_id: string;
+    name: string;
+    description: string;
+    data_basis: CalibrationDataBasis;
+    privacy_approval_reference?: string;
+    policy_as_of_date: string;
+    cases: ShadowCalibrationCaseInput[];
+}
+
+export interface ShadowCalibrationSuiteSummary {
+    suite_id: string;
+    domain_id: string;
+    release_id: string;
+    release_version: string;
+    name: string;
+    description: string;
+    data_basis: CalibrationDataBasis;
+    privacy_approval_reference?: string | null;
+    policy_as_of_date: string;
+    author_id: string;
+    status: CalibrationSuiteStatus;
+    input_sha256: string;
+    certified_by?: string | null;
+    certification_note?: string | null;
+    certified_at?: string | null;
+    completed_at?: string | null;
+    case_count: number;
+    created_at?: string | null;
+}
+
+export interface ShadowCalibrationCase {
+    case_id: string;
+    case_reference: string;
+    description: string;
+    recorded_decision: CalibrationDecision;
+    recorded_outcome_reference: string;
+    facts: ShadowCalibrationFactInput[];
+}
+
+export interface ShadowCalibrationRun {
+    run_id: string;
+    report: {
+        all_cases_passed: boolean;
+        policy_sha256: string;
+        cases: Array<{
+            id: string;
+            expected_decision: CalibrationDecision;
+            actual_decision: CalibrationDecision;
+            passed: boolean;
+            input_sha256: string;
+            trace_sha256: string;
+            evaluated_rules: number;
+        }>;
+    };
+    report_sha256: string;
+    executed_by: string;
+    created_at?: string | null;
+}
+
+export interface ShadowCalibrationFinding {
+    finding_id: string;
+    case_id: string;
+    case_reference: string;
+    expected_decision: CalibrationDecision;
+    actual_decision: CalibrationDecision;
+    input_sha256: string;
+    trace_sha256: string;
+    status: 'OPEN' | 'RESOLVED';
+    classification?: CalibrationFindingClassification | null;
+    resolution_note?: string | null;
+    resolved_by?: string | null;
+    resolved_at?: string | null;
+}
+
+export interface ShadowCalibrationSuite extends ShadowCalibrationSuiteSummary {
+    cases: ShadowCalibrationCase[];
+    events: Array<{ event_type: string; actor_id: string; note?: string | null; created_at?: string | null }>;
+    run?: ShadowCalibrationRun | null;
+    findings: ShadowCalibrationFinding[];
+}
+
 export interface SystemRecordImportFieldMapping {
     source_column: string;
     target_path: string;
@@ -499,6 +610,66 @@ export const fetchAdminDomains = async (): Promise<AdminDomain[]> => {
 export const fetchRecordImportFields = async (domainId: string): Promise<RecordImportField[]> => {
     const response = await apiClient.get<{ items: RecordImportField[] }>(`/admin/domains/${domainId}/record-import-fields`);
     return response.data.items;
+}
+
+export const fetchCalibrationReleases = async (domainId: string): Promise<CalibrationRelease[]> => {
+    const response = await apiClient.get<{ items: CalibrationRelease[] }>(`/governance/domains/${domainId}/calibration-releases`);
+    return response.data.items;
+}
+
+export const fetchShadowCalibrations = async (domainId: string): Promise<ShadowCalibrationSuiteSummary[]> => {
+    const response = await apiClient.get<{ items: ShadowCalibrationSuiteSummary[] }>('/governance/shadow-calibrations', {
+        params: { domain_id: domainId },
+    });
+    return response.data.items;
+}
+
+export const fetchShadowCalibration = async (suiteId: string, domainId: string): Promise<ShadowCalibrationSuite> => {
+    const response = await apiClient.get<ShadowCalibrationSuite>(`/governance/shadow-calibrations/${suiteId}`, {
+        params: { domain_id: domainId },
+    });
+    return response.data;
+}
+
+export const createShadowCalibration = async (payload: ShadowCalibrationSuiteInput): Promise<ShadowCalibrationSuite> => {
+    const response = await apiClient.post<ShadowCalibrationSuite>('/governance/shadow-calibrations', payload);
+    return response.data;
+}
+
+export const certifyShadowCalibration = async (
+    suiteId: string,
+    domainId: string,
+    note: string,
+): Promise<ShadowCalibrationSuite> => {
+    const response = await apiClient.post<ShadowCalibrationSuite>(`/governance/shadow-calibrations/${suiteId}/certify`, {
+        domain_id: domainId,
+        note,
+    });
+    return response.data;
+}
+
+export const runShadowCalibration = async (
+    suiteId: string,
+    domainId: string,
+): Promise<{ run: ShadowCalibrationRun; message: string }> => {
+    const response = await apiClient.post<{ run: ShadowCalibrationRun; message: string }>(`/governance/shadow-calibrations/${suiteId}/run`, {
+        domain_id: domainId,
+    });
+    return response.data;
+}
+
+export const resolveShadowCalibrationFinding = async (
+    findingId: string,
+    domainId: string,
+    classification: CalibrationFindingClassification,
+    note: string,
+): Promise<ShadowCalibrationFinding> => {
+    const response = await apiClient.patch<ShadowCalibrationFinding>(`/governance/shadow-calibration-findings/${findingId}`, {
+        domain_id: domainId,
+        classification,
+        note,
+    });
+    return response.data;
 }
 
 export const previewSystemRecordImport = async (
