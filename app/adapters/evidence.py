@@ -18,7 +18,7 @@ class EvidenceAdapter(ABC):
     """Base interface for all data ingestion."""
     
     @abstractmethod
-    async def ingest(self, subject_id: str, raw_payload: Any) -> Evidence:
+    async def ingest(self, *, tenant_id: str, subject_id: str, raw_payload: Any) -> Evidence:
         """Transforms a domain-specific payload into a canonical Evidence object."""
         pass
 
@@ -26,7 +26,7 @@ class EvidenceAdapter(ABC):
 class RawTextAdapter(EvidenceAdapter):
     """Adapter for unstructured text (e.g., OCR'd PDFs, user form text)."""
     
-    async def ingest(self, subject_id: str, raw_payload: str) -> Evidence:
+    async def ingest(self, *, tenant_id: str, subject_id: str, raw_payload: str) -> Evidence:
         if not isinstance(raw_payload, str):
             raise ValueError("RawTextAdapter expects a string payload.")
             
@@ -35,7 +35,7 @@ class RawTextAdapter(EvidenceAdapter):
         hasher.update(raw_payload.encode("utf-8"))
         content_hash = hasher.hexdigest()
 
-        storage_key = await BlobStorage.upload_text(raw_payload)
+        storage_key = await BlobStorage.upload_text(raw_payload, tenant_id=tenant_id)
         
         return Evidence(
             subject_id=subject_id,
@@ -52,7 +52,7 @@ class LegacyERPAdapter(EvidenceAdapter):
     It takes structured JSON from the ERP API and spools it to BlobStorage.
     """
     
-    async def ingest(self, subject_id: str, raw_payload: Dict[str, Any]) -> Evidence:
+    async def ingest(self, *, tenant_id: str, subject_id: str, raw_payload: Dict[str, Any]) -> Evidence:
         if not isinstance(raw_payload, dict):
             raise ValueError("LegacyERPAdapter expects a JSON dictionary payload.")
             
@@ -64,7 +64,7 @@ class LegacyERPAdapter(EvidenceAdapter):
         hasher.update(stringified_content.encode("utf-8"))
         content_hash = hasher.hexdigest()
         
-        storage_key = await BlobStorage.upload_text(stringified_content)
+        storage_key = await BlobStorage.upload_text(stringified_content, tenant_id=tenant_id)
         
         # We set a high trust level implicitly because it comes from an API
         return Evidence(

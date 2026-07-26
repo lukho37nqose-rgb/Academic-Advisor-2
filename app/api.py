@@ -482,8 +482,11 @@ async def ingest_evidence(
     ensure_subject_access(user, request.subject_id)
     adapter = RawTextAdapter()
     try:
-        # The adapter will hash the content and upload it to the stub BlobStorage
-        evidence = await adapter.ingest(request.subject_id, request.content)
+        evidence = await adapter.ingest(
+            tenant_id=user.tenant_id,
+            subject_id=request.subject_id,
+            raw_payload=request.content,
+        )
         
         evidence_repo = EvidenceRepository(db)
         await evidence_repo.create_evidence(
@@ -492,8 +495,14 @@ async def ingest_evidence(
             domain_id=request.domain_id,
         )
         return {**evidence.model_dump(), "domain_id": request.domain_id}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Evidence ingestion failed: {str(e)}")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        Telemetry.log_error(exc, {"stage": "evidence_ingestion"})
+        raise HTTPException(
+            status_code=503,
+            detail="Evidence ingestion is temporarily unavailable.",
+        ) from exc
 
 @app.post("/api/v1/evaluate", status_code=202)
 async def start_evaluation(
@@ -859,9 +868,10 @@ async def create_handbook_upload_session(
 
     ttl_seconds = handbook_upload_session_ttl_seconds()
     session_id = f"handbook_session_{uuid.uuid4().hex}"
-    storage_key = f"handbook-staging/{session_id}.pdf"
+    storage_key = f"{BlobStorage.tenant_prefix(user.tenant_id)}/handbook-staging/{session_id}.pdf"
     try:
         upload_contract = await BlobStorage.create_presigned_post(
+            tenant_id=user.tenant_id,
             key=storage_key,
             content_type=content_type,
             maximum_size=request.file_size_bytes,
@@ -942,7 +952,12 @@ async def upload_handbook(
         if total_size == 0:
             raise HTTPException(status_code=422, detail="Handbook upload is empty.")
         content_hash = source_hash.hexdigest()
-        storage_key = await BlobStorage.upload_binary(source_file, content_hash=content_hash, suffix=".pdf")
+        storage_key = await BlobStorage.upload_binary(
+            source_file,
+            tenant_id=user.tenant_id,
+            content_hash=content_hash,
+            suffix=".pdf",
+        )
 
     handbook_id = "handbook_" + uuid.uuid4().hex
     try:

@@ -60,6 +60,10 @@ is switched.
   `GOVERNANCE_KEY_ID`; verify historical releases after every rotation.
 - Use workload identity for database/object-store access where available; do not
   place cloud access keys in images or browser code.
+- Keep object storage private and scope application IAM access to
+  `tenants/{tenant_id}/` prefixes. Configure lifecycle, export, and audit jobs
+  against the same prefix so a tenant's evidence and source documents remain
+  operationally separable without staff handling storage objects.
 - Restrict migration, application, and break-glass database accounts to distinct
   credentials and least-privilege roles.
 - Run handbook/OCR workers with a tenant identifier in the trusted job payload,

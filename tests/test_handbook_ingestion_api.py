@@ -207,6 +207,7 @@ def test_direct_handbook_session_becomes_a_canonical_hashed_source(tmp_path, mon
 
         upload_session = asyncio.run(_load_session())
         assert upload_session is not None
+        assert upload_session.storage_key == f"tenants/tenant_handbook/handbook-staging/{session_id}.pdf"
         BlobStorage._store[upload_session.storage_key] = source
 
         completion = client.post(f"/api/v1/governance/handbook-upload-sessions/{session_id}/complete")
@@ -232,7 +233,7 @@ def test_direct_handbook_session_becomes_a_canonical_hashed_source(tmp_path, mon
     assert extracted is True
     assert upload is not None
     assert upload.content_hash == hashlib.sha256(source).hexdigest()
-    assert upload.storage_key == f"sources/{upload.content_hash}.pdf"
+    assert upload.storage_key == f"tenants/tenant_handbook/sources/{upload.content_hash}.pdf"
     assert upload.status == "READY_FOR_REVIEW"
 
 

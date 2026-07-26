@@ -106,7 +106,7 @@ Use `.env.example` as the local configuration inventory. Do not commit secrets.
 - `REASONING_ENGINE_AI_PROVIDER`: use `mock` for deterministic local runs.
 - `OPENAI_API_KEY`: only for configured extraction/explanation boundaries.
 - `GOVERNANCE_PRIVATE_KEY`: release-signing key.
-- `S3_BUCKET_NAME`: object storage for evidence and future handbook ingestion.
+- `S3_BUCKET_NAME`: private object storage for evidence and handbook ingestion; new objects are automatically namespaced under `tenants/{tenant_id}/`.
 - `HANDBOOK_UPLOAD_MAX_BYTES`: maximum PDF size accepted by the handbook intake API.
 
 ## Production Risks

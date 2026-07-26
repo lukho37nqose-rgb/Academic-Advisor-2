@@ -17,9 +17,11 @@ The standard upload API accepts only PDFs and streams them through a spooled tem
 
 When S3 is configured, the interface first requests a short-lived upload session. The browser then sends the source directly to a single, constrained staging key rather than through the API server. Completion checks the exact declared object size and MIME type, creates a one-time queued job, and returns control to the same extraction worker.
 
-The worker reads the staged bytes, computes the authoritative SHA-256 hash, writes a content-addressed encrypted source object, and only then begins page extraction. A browser-supplied filename, MIME type, or upload response is never treated as proof of the source bytes.
+Every new evidence and handbook object is written beneath `tenants/{tenant_id}/`. This gives each institution a distinct object-storage boundary for least-privilege access, lifecycle reporting, and export. Legacy object keys remain readable for migration, but new records cannot be created outside a validated tenant prefix.
 
-The production bucket must allow CORS only for the institution's application origin, block public access, use bucket versioning and lifecycle cleanup for abandoned `handbook-staging/` objects, and restrict presigned uploads to the application's IAM role. Set `S3_BUCKET_NAME`, `S3_SERVER_SIDE_ENCRYPTION`, `HANDBOOK_DIRECT_UPLOAD_MAX_BYTES` (2 GB by default), and `HANDBOOK_UPLOAD_SESSION_TTL_SECONDS` (15 minutes by default). Without S3, the interface automatically uses the existing bounded API upload path.
+The worker reads the staged bytes, computes the authoritative SHA-256 hash, writes a tenant-scoped, content-addressed encrypted source object, and only then begins page extraction. A browser-supplied filename, MIME type, or upload response is never treated as proof of the source bytes.
+
+The production bucket must allow CORS only for the institution's application origin, block public access, use bucket versioning and lifecycle cleanup for abandoned `tenants/*/handbook-staging/` objects, and restrict presigned uploads to the application's IAM role. Set `S3_BUCKET_NAME`, `S3_SERVER_SIDE_ENCRYPTION`, `HANDBOOK_DIRECT_UPLOAD_MAX_BYTES` (2 GB by default), and `HANDBOOK_UPLOAD_SESSION_TTL_SECONDS` (15 minutes by default). Without S3, the interface automatically uses the existing bounded API upload path.
 
 The worker is started outside the API process:
 

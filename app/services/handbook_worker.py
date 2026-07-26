@@ -45,6 +45,7 @@ async def _process_handbook_upload(handbook_id: str) -> bool:
             if upload.content_hash is None:
                 canonical_key = await BlobStorage.upload_binary(
                     source_file,
+                    tenant_id=upload.tenant_id,
                     content_hash=content_hash,
                     suffix=".pdf",
                 )

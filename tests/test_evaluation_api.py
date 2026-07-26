@@ -132,6 +132,7 @@ def test_evaluation_persists_tenant_scoped_claims_and_facts(tmp_path, monkeypatc
         asyncio.run(engine.dispose())
 
     assert ingestion.status_code == 201
+    assert ingestion.json()["storage_key"].startswith("tenants/tenant_demo_uni/evidence/")
     assert missing_date.status_code == 422
     assert "as_of_date" in missing_date.json()["detail"]
     assert evaluation.status_code == 202
