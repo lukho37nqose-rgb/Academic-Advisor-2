@@ -276,16 +276,37 @@ async def _seed_two_tenants(app_url: str) -> None:
                     """),
                     {"id": draft_id, "tenant_id": tenant_id, "domain_id": domain_id},
                 )
+                mapping_contract = json.dumps({
+                    "format_version": "1.0",
+                    "mapping_id": "rehearsal",
+                    "source_system": "Synthetic registrar",
+                    "subject_identifier_column": "record_id",
+                    "source_record_version_column": "version",
+                    "fields": [{
+                        "source_column": "credits",
+                        "target_path": "facts.completed_credits",
+                        "value_type": "integer",
+                        "required": True,
+                    }],
+                    "max_rows": 10_000,
+                    "max_bytes": 20_000_000,
+                })
                 await connection.execute(
                     text("""
                         INSERT INTO system_record_import_mappings
                         (id, tenant_id, domain_id, mapping_name, source_system, contract, contract_sha256, author_id, status)
                         VALUES
                         (:id, :tenant_id, :domain_id, 'Rehearsal export', 'Synthetic registrar',
-                         CAST('{"format_version":"1.0","mapping_id":"rehearsal","source_system":"Synthetic registrar","subject_identifier_column":"record_id","source_record_version_column":"version","fields":[{"source_column":"credits","target_path":"facts.completed_credits","value_type":"integer","required":true}],"max_rows":10000,"max_bytes":20000000}' AS jsonb),
+                         CAST(:contract AS jsonb),
                          :hash, 'author_1', 'PENDING')
                     """),
-                    {"id": f"mapping_{tenant_id}", "tenant_id": tenant_id, "domain_id": domain_id, "hash": "a" * 64},
+                    {
+                        "id": f"mapping_{tenant_id}",
+                        "tenant_id": tenant_id,
+                        "domain_id": domain_id,
+                        "contract": mapping_contract,
+                        "hash": "a" * 64,
+                    },
                 )
                 await connection.execute(
                     text("""
