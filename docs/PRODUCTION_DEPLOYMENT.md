@@ -80,6 +80,10 @@ is switched.
 - Alert on readiness failures, request error rate, latency, Redis/idempotency
   failures, failed handbook workers, unreviewed OCR backlog, overdue assistance
   requests, authorisation denials, and release failures.
+- Require the protected CI checks to pass before a deployment. They use
+  read-only repository permissions, immutable action references, bounded job
+  times, production dependency audit, schema migration verification, and a
+  PostgreSQL RLS rehearsal.
 - Rehearse an identity-revocation event, signing-key rotation, source-policy
   rollback, bad release rejection, backup restoration, and privacy/security
   incident escalation.
