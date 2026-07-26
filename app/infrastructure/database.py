@@ -39,6 +39,9 @@ _RLS_TABLES = (
     "system_record_import_mappings", "system_record_import_mapping_events",
     "evidence", "claims", "facts", "support_requests", "support_request_events",
     "decision_review_cases", "decision_review_case_events", "reasoning_graphs",
+    "shadow_calibration_suites", "shadow_calibration_cases", "shadow_calibration_suite_events",
+    "shadow_calibration_runs", "shadow_calibration_findings",
+    "institutional_context_events", "institutional_context_event_attestations",
 )
 
 

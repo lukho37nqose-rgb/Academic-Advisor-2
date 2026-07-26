@@ -12,7 +12,7 @@ const tenantAdminSession: SessionCapabilities = {
     experience: 'staff',
     role: 'tenant_admin',
     role_label: 'Tenant administrator',
-    allowed_views: ['governance', 'institution_setup', 'handbook_intake', 'record_import', 'assistance_inbox', 'decision_review_inbox', 'policy_review', 'policy_ambiguities', 'shadow_calibration'],
+    allowed_views: ['governance', 'institution_setup', 'handbook_intake', 'record_import', 'assistance_inbox', 'decision_review_inbox', 'policy_review', 'policy_ambiguities', 'shadow_calibration', 'institutional_timeline'],
 };
 
 const subjectSession: SessionCapabilities = {
@@ -83,6 +83,7 @@ test.describe('Workspace access boundaries', () => {
         await expect(page.getByRole('button', { name: 'Governance Desk' })).toBeVisible();
         await expect(page.getByRole('button', { name: 'System Records' })).toBeVisible();
         await expect(page.getByRole('button', { name: 'Shadow Calibration' })).toBeVisible();
+        await expect(page.getByRole('button', { name: 'Institutional Timeline' })).toBeVisible();
         await expect(page.getByRole('button', { name: 'Investigations' })).toHaveCount(0);
     });
 
@@ -133,6 +134,48 @@ test.describe('Workspace access boundaries', () => {
             experience: 'staff', role: 'auditor', role_label: 'Auditor', allowed_views: ['shadow_calibration'],
         });
         await expect(page.getByRole('button', { name: 'New suite' })).toHaveCount(0);
+    });
+
+    test('shows a records steward only the institutional timeline workspace', async ({ page }) => {
+        await page.route('**/api/v1/admin/domains', async route => {
+            await route.fulfill({ json: { items: [{ domain_id: 'dom_context', domain_name: 'Academic progression' }] } });
+        });
+        await page.route('**/api/v1/governance/domains/dom_context/calibration-releases', async route => {
+            await route.fulfill({ json: { items: [] } });
+        });
+        await openApplication(page, {
+            experience: 'staff', role: 'institutional_records_steward', role_label: 'Institutional records steward', allowed_views: ['institutional_timeline'],
+        });
+        await expect(page.getByRole('button', { name: 'Institutional Timeline' })).toBeVisible();
+        await expect(page.getByRole('button', { name: 'Governance Desk' })).toHaveCount(0);
+        await expect(page.getByRole('button', { name: 'Record existing decision' })).toBeVisible();
+    });
+
+    test('shows a subject certified institutional context without staff-only references', async ({ page }) => {
+        await page.route('**/api/v1/institutional-timeline', async route => {
+            await route.fulfill({
+                json: {
+                    items: [{
+                        event_id: 'context_1', domain_id: 'dom_subject', event_type: 'CONCESSION', title: 'Progression concession approved',
+                        student_summary: 'An authorised faculty decision permits the recorded progression position.',
+                        institutional_effect: 'The progression position remains active until a later authorised decision changes it.',
+                        authority_name: 'Faculty academic committee', event_date: '2026-02-12', effective_from: '2026-02-12', effective_until: null,
+                        visibility: 'SUBJECT', policy_release_id: 'release_2026_1', policy_release_version: '2026.1', policy_citation: 'Programme Progression Policy, section 4',
+                        status: 'CERTIFIED', timeline_state: 'ACTIVE',
+                    }],
+                },
+            });
+        });
+        await page.route('**/api/v1/public/policy-guides', async route => {
+            await route.fulfill({ json: { items: [] } });
+        });
+        await mockSessionCapabilities(page, subjectSession);
+        await page.goto('/', { waitUntil: 'domcontentloaded' });
+        await expect(page.getByRole('heading', { name: 'Your institutional timeline' })).toBeVisible();
+        await expect(page.getByRole('heading', { name: 'Progression concession approved' })).toBeVisible();
+        await expect(page.getByText('Faculty academic committee')).toBeVisible();
+        await expect(page.getByText('Programme Progression Policy, section 4')).toBeVisible();
+        await expect(page.getByText('Institutional decision record 2026-14')).toHaveCount(0);
     });
 
     test('renders a personal view of how the common policy applies to an eligible trace', async ({ page }) => {

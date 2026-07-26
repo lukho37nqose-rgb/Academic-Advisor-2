@@ -63,6 +63,18 @@ ROLE_PERMISSION_MATRIX: list[dict[str, Any]] = [
         "scope": "Assigned domain metadata only.",
     },
     {
+        "role": Role.INSTITUTIONAL_RECORDS_STEWARD.value,
+        "label": "Institutional records steward",
+        "can_quick_edit": False,
+        "can_author_structured_drafts": False,
+        "can_approve_releases": False,
+        "can_replay_audits": False,
+        "can_manage_assistance_requests": False,
+        "can_manage_decision_reviews": False,
+        "can_resolve_policy_ambiguities": False,
+        "scope": "Records existing subject-specific institutional decisions for independent certification; cannot create policy exceptions or certify their own records.",
+    },
+    {
         "role": Role.ASSISTANCE_COORDINATOR.value,
         "label": "Assistance coordinator",
         "can_quick_edit": False,

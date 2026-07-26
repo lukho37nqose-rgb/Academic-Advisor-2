@@ -41,6 +41,9 @@ inputs, subject to the controls below.
 5. A written definition of the subject, tenant, and domain access boundaries.
 6. An OIDC application registration that supplies an issuer, audience, JWKS URL,
    and claims for tenant, role, and domain assignments.
+7. A named institutional records steward, a separate context certifier, and an
+   approved source-reference convention for any concessions, appeals, curriculum
+   applicability decisions, or assessment accommodations included in a timeline.
 
 ## Large Document Acceptance Criteria
 
@@ -66,3 +69,8 @@ evidence, claims, facts, and rule citations, and identify every disagreement as
 either a source-data problem, policy-model problem, or governance decision.
 The comparison must be recorded as a shadow-calibration report before any
 operative use is considered.
+
+Where institutional context is included, the subject view must be checked
+against the authoritative decision register: it must show the approved
+explanation and temporal effect without exposing staff-only notes or supporting
+evidence.

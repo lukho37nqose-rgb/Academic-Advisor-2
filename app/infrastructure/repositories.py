@@ -45,6 +45,8 @@ from app.infrastructure.db import (
     DBDomain,
     DBDecisionReviewCase,
     DBDecisionReviewCaseEvent,
+    DBInstitutionalContextEvent,
+    DBInstitutionalContextEventAttestation,
     DBSupportRequest,
     DBSupportRequestEvent,
     DBTenant,
@@ -151,6 +153,10 @@ class SystemRecordImportMappingConflictError(ValueError):
 
 class ShadowCalibrationConflictError(ValueError):
     """Raised when a non-operative calibration workflow violates its lifecycle."""
+
+
+class InstitutionalContextEventConflictError(ValueError):
+    """Raised when an institutional-history record violates its governance lifecycle."""
 
 
 class MetadataGovernanceRepository:
@@ -1052,6 +1058,391 @@ class ShadowCalibrationRepository:
         setattr(finding, "resolved_at", datetime.now(timezone.utc))
         await self.session.commit()
         return self._finding_payload(finding, cast(str, case_reference))
+
+
+class InstitutionalContextEventRepository:
+    """Stores certified, subject-scoped institutional history without changing policy."""
+
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    @staticmethod
+    def _canonical_sha256(value: Any) -> str:
+        serialized = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+        return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _as_utc(value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+    @classmethod
+    def _payload(
+        cls,
+        row: DBInstitutionalContextEvent,
+        *,
+        release_version: str | None,
+        timeline_state: str,
+        include_internal: bool,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "event_id": cast(str, row.id),
+            "domain_id": cast(str, row.domain_id),
+            "event_type": cast(str, row.event_type),
+            "title": cast(str, row.title),
+            "student_summary": cast(str, row.student_summary),
+            "institutional_effect": cast(str, row.institutional_effect),
+            "authority_name": cast(str, row.authority_name),
+            "event_date": row.event_date.isoformat(),
+            "effective_from": row.effective_from.isoformat(),
+            "effective_until": row.effective_until.isoformat() if row.effective_until else None,
+            "visibility": cast(str, row.visibility),
+            "policy_release_id": cast(Optional[str], row.policy_release_id),
+            "policy_release_version": release_version,
+            "policy_citation": cast(Optional[str], row.policy_citation),
+            "status": cast(str, row.status),
+            "timeline_state": timeline_state,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        }
+        if include_internal:
+            attested_at = cls._as_utc(cast(Optional[datetime], row.attested_at))
+            payload.update({
+                "subject_id": cast(str, row.subject_id),
+                "authority_reference": cast(str, row.authority_reference),
+                "source_reference": cast(str, row.source_reference),
+                "predecessor_event_id": cast(Optional[str], row.predecessor_event_id),
+                "predecessor_relationship": cast(Optional[str], row.predecessor_relationship),
+                "input_sha256": cast(str, row.input_sha256),
+                "recorded_by": cast(str, row.recorded_by),
+                "attested_by": cast(Optional[str], row.attested_by),
+                "attestation_note": cast(Optional[str], row.attestation_note),
+                "attested_at": attested_at.isoformat() if attested_at else None,
+            })
+        return payload
+
+    async def _certified_successor_relationships(
+        self,
+        *,
+        tenant_id: str,
+        subject_id: str,
+        domain_id: str | None,
+    ) -> dict[str, str]:
+        query = select(
+            DBInstitutionalContextEvent.predecessor_event_id,
+            DBInstitutionalContextEvent.predecessor_relationship,
+        ).where(
+            DBInstitutionalContextEvent.tenant_id == tenant_id,
+            DBInstitutionalContextEvent.subject_id == subject_id,
+            DBInstitutionalContextEvent.status == "CERTIFIED",
+            DBInstitutionalContextEvent.predecessor_event_id.is_not(None),
+        )
+        if domain_id is not None:
+            query = query.where(DBInstitutionalContextEvent.domain_id == domain_id)
+        rows = (await self.session.execute(query)).all()
+        return {
+            cast(str, predecessor_id): cast(str, relationship)
+            for predecessor_id, relationship in rows
+            if predecessor_id and relationship
+        }
+
+    async def _predecessor_for_update(
+        self,
+        *,
+        predecessor_event_id: str,
+        tenant_id: str,
+        domain_id: str,
+        subject_id: str,
+    ) -> DBInstitutionalContextEvent:
+        result = await self.session.execute(
+            select(DBInstitutionalContextEvent)
+            .where(
+                DBInstitutionalContextEvent.id == predecessor_event_id,
+                DBInstitutionalContextEvent.tenant_id == tenant_id,
+                DBInstitutionalContextEvent.domain_id == domain_id,
+                DBInstitutionalContextEvent.subject_id == subject_id,
+            )
+            .with_for_update()
+        )
+        predecessor = result.scalars().first()
+        if predecessor is None or predecessor.status != "CERTIFIED":
+            raise InstitutionalContextEventConflictError(
+                "A context event can affect only a certified earlier event for the same subject and domain."
+            )
+        existing_successor = await self.session.scalar(
+            select(DBInstitutionalContextEvent.id).where(
+                DBInstitutionalContextEvent.predecessor_event_id == predecessor_event_id,
+                DBInstitutionalContextEvent.status == "CERTIFIED",
+            )
+        )
+        if existing_successor is not None:
+            raise InstitutionalContextEventConflictError(
+                "The earlier context event already has a certified superseding or revoking record."
+            )
+        return predecessor
+
+    async def create_event(
+        self,
+        *,
+        event_id: str,
+        tenant_id: str,
+        domain_id: str,
+        subject_id: str,
+        event_type: str,
+        title: str,
+        student_summary: str,
+        institutional_effect: str,
+        authority_name: str,
+        authority_reference: str,
+        source_reference: str,
+        event_date: date,
+        effective_from: date,
+        effective_until: date | None,
+        visibility: str,
+        policy_release_id: str | None,
+        policy_citation: str | None,
+        predecessor_event_id: str | None,
+        predecessor_relationship: str | None,
+        recorded_by: str,
+    ) -> dict[str, Any]:
+        if predecessor_event_id:
+            await self._predecessor_for_update(
+                predecessor_event_id=predecessor_event_id,
+                tenant_id=tenant_id,
+                domain_id=domain_id,
+                subject_id=subject_id,
+            )
+        snapshot = {
+            "domain_id": domain_id,
+            "subject_id": subject_id,
+            "event_type": event_type,
+            "title": title,
+            "student_summary": student_summary,
+            "institutional_effect": institutional_effect,
+            "authority_name": authority_name,
+            "authority_reference": authority_reference,
+            "source_reference": source_reference,
+            "event_date": event_date.isoformat(),
+            "effective_from": effective_from.isoformat(),
+            "effective_until": effective_until.isoformat() if effective_until else None,
+            "visibility": visibility,
+            "policy_release_id": policy_release_id,
+            "policy_citation": policy_citation,
+            "predecessor_event_id": predecessor_event_id,
+            "predecessor_relationship": predecessor_relationship,
+        }
+        event = DBInstitutionalContextEvent(
+            id=event_id,
+            tenant_id=tenant_id,
+            domain_id=domain_id,
+            subject_id=subject_id,
+            event_type=event_type,
+            title=title,
+            student_summary=student_summary,
+            institutional_effect=institutional_effect,
+            authority_name=authority_name,
+            authority_reference=authority_reference,
+            source_reference=source_reference,
+            event_date=event_date,
+            effective_from=effective_from,
+            effective_until=effective_until,
+            visibility=visibility,
+            policy_release_id=policy_release_id,
+            policy_citation=policy_citation,
+            predecessor_event_id=predecessor_event_id,
+            predecessor_relationship=predecessor_relationship,
+            status="SUBMITTED",
+            input_sha256=self._canonical_sha256(snapshot),
+            recorded_by=recorded_by,
+        )
+        self.session.add(event)
+        self.session.add(
+            DBInstitutionalContextEventAttestation(
+                id="context_attestation_" + uuid.uuid4().hex,
+                context_event_id=event_id,
+                tenant_id=tenant_id,
+                domain_id=domain_id,
+                sequence=1,
+                action="SUBMITTED",
+                actor_id=recorded_by,
+                note="Submitted for independent certification as a record of an existing institutional decision.",
+            )
+        )
+        try:
+            await self.session.commit()
+        except IntegrityError as exc:
+            await self.session.rollback()
+            raise InstitutionalContextEventConflictError("The institutional context event could not be recorded.") from exc
+        event_payload = await self.get_event(
+            event_id=event_id,
+            tenant_id=tenant_id,
+            include_internal=True,
+        )
+        if event_payload is None:
+            raise InstitutionalContextEventConflictError("The institutional context event was not available after submission.")
+        return event_payload
+
+    async def list_events(
+        self,
+        *,
+        tenant_id: str,
+        subject_id: str,
+        domain_id: str | None,
+        subject_safe: bool,
+    ) -> list[dict[str, Any]]:
+        query = (
+            select(DBInstitutionalContextEvent, DBRelease.version)
+            .outerjoin(DBRelease, DBRelease.id == DBInstitutionalContextEvent.policy_release_id)
+            .where(
+                DBInstitutionalContextEvent.tenant_id == tenant_id,
+                DBInstitutionalContextEvent.subject_id == subject_id,
+            )
+        )
+        if domain_id is not None:
+            query = query.where(DBInstitutionalContextEvent.domain_id == domain_id)
+        if subject_safe:
+            query = query.where(
+                DBInstitutionalContextEvent.status == "CERTIFIED",
+                DBInstitutionalContextEvent.visibility == "SUBJECT",
+            )
+        rows = (
+            await self.session.execute(
+                query.order_by(
+                    DBInstitutionalContextEvent.effective_from.desc(),
+                    DBInstitutionalContextEvent.event_date.desc(),
+                    DBInstitutionalContextEvent.id,
+                )
+            )
+        ).all()
+        successor_relationships = await self._certified_successor_relationships(
+            tenant_id=tenant_id,
+            subject_id=subject_id,
+            domain_id=domain_id,
+        )
+        today = date.today()
+        payloads = []
+        for event, release_version in rows:
+            event_id = cast(str, event.id)
+            if event.status != "CERTIFIED":
+                timeline_state = cast(str, event.status)
+            elif successor_relationships.get(event_id) == "SUPERSEDES":
+                timeline_state = "SUPERSEDED"
+            elif successor_relationships.get(event_id) == "REVOKES":
+                timeline_state = "REVOKED"
+            elif event.effective_until and event.effective_until < today:
+                timeline_state = "EXPIRED"
+            else:
+                timeline_state = "ACTIVE"
+            payloads.append(self._payload(
+                event,
+                release_version=cast(Optional[str], release_version),
+                timeline_state=timeline_state,
+                include_internal=not subject_safe,
+            ))
+        return payloads
+
+    async def get_event(
+        self,
+        *,
+        event_id: str,
+        tenant_id: str,
+        include_internal: bool,
+    ) -> Optional[dict[str, Any]]:
+        result = await self.session.execute(
+            select(DBInstitutionalContextEvent, DBRelease.version)
+            .outerjoin(DBRelease, DBRelease.id == DBInstitutionalContextEvent.policy_release_id)
+            .where(
+                DBInstitutionalContextEvent.id == event_id,
+                DBInstitutionalContextEvent.tenant_id == tenant_id,
+            )
+        )
+        row = result.first()
+        if row is None:
+            return None
+        event, release_version = row
+        successor_relationships = await self._certified_successor_relationships(
+            tenant_id=tenant_id,
+            subject_id=cast(str, event.subject_id),
+            domain_id=cast(str, event.domain_id),
+        )
+        event_id_value = cast(str, event.id)
+        if event.status != "CERTIFIED":
+            timeline_state = cast(str, event.status)
+        elif successor_relationships.get(event_id_value) == "SUPERSEDES":
+            timeline_state = "SUPERSEDED"
+        elif successor_relationships.get(event_id_value) == "REVOKES":
+            timeline_state = "REVOKED"
+        elif event.effective_until and event.effective_until < date.today():
+            timeline_state = "EXPIRED"
+        else:
+            timeline_state = "ACTIVE"
+        return self._payload(
+            event,
+            release_version=cast(Optional[str], release_version),
+            timeline_state=timeline_state,
+            include_internal=include_internal,
+        )
+
+    async def attest_event(
+        self,
+        *,
+        event_id: str,
+        tenant_id: str,
+        domain_id: str,
+        actor_id: str,
+        action: str,
+        note: str,
+    ) -> Optional[dict[str, Any]]:
+        result = await self.session.execute(
+            select(DBInstitutionalContextEvent)
+            .where(
+                DBInstitutionalContextEvent.id == event_id,
+                DBInstitutionalContextEvent.tenant_id == tenant_id,
+                DBInstitutionalContextEvent.domain_id == domain_id,
+            )
+            .with_for_update()
+        )
+        event = result.scalars().first()
+        if event is None:
+            return None
+        if event.status != "SUBMITTED":
+            raise InstitutionalContextEventConflictError("Only a submitted institutional context event can be attested.")
+        if event.recorded_by == actor_id:
+            raise InstitutionalContextEventConflictError("The person who recorded an event cannot attest it.")
+        if action == "CERTIFY" and event.predecessor_event_id:
+            await self._predecessor_for_update(
+                predecessor_event_id=cast(str, event.predecessor_event_id),
+                tenant_id=tenant_id,
+                domain_id=domain_id,
+                subject_id=cast(str, event.subject_id),
+            )
+        now = datetime.now(timezone.utc)
+        status = "CERTIFIED" if action == "CERTIFY" else "REJECTED"
+        setattr(event, "status", status)
+        setattr(event, "attested_by", actor_id)
+        setattr(event, "attestation_note", note)
+        setattr(event, "attested_at", now)
+        try:
+            # PostgreSQL validates the state transition before it accepts its
+            # matching append-only attestation, so persist the lifecycle state first.
+            await self.session.flush()
+            self.session.add(
+                DBInstitutionalContextEventAttestation(
+                    id="context_attestation_" + uuid.uuid4().hex,
+                    context_event_id=event_id,
+                    tenant_id=tenant_id,
+                    domain_id=domain_id,
+                    sequence=2,
+                    action=status,
+                    actor_id=actor_id,
+                    note=note,
+                )
+            )
+            await self.session.commit()
+        except IntegrityError as exc:
+            await self.session.rollback()
+            raise InstitutionalContextEventConflictError("The institutional context attestation could not be recorded.") from exc
+        return await self.get_event(event_id=event_id, tenant_id=tenant_id, include_internal=True)
 
 
 class BackgroundJobRepository:

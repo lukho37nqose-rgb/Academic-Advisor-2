@@ -32,6 +32,13 @@ certify the suite before it can run. The comparison produces an immutable report
 of matches and mismatches; it cannot alter a subject record, a policy release,
 or an operative institutional decision.
 
+An institutional records steward can record an already-authorised concession,
+appeal outcome, curriculum applicability decision, assessment accommodation, or
+other structured context event. A different policy owner or tenant administrator
+must certify it before a subject can see a safe explanation in their
+Institutional Timeline. Later events can supersede or revoke earlier ones
+without erasing the original record.
+
 People governed by a decision can view an approved public policy guide, open a
 human-assistance request where enabled, and request a review of their own
 decision trace. Their trace view presents the current policy position, the
@@ -51,10 +58,11 @@ role, tenant, domain, and subject-ownership check.
 | --- | --- | --- |
 | Subject | Public policy guide; their own personal policy-position view | View how the common approved policy applies to their own authorised trace; request assistance or a review where the institution enabled it. |
 | Metadata steward | Governance Desk | Apply only pre-configured low-risk metadata edits in assigned domains. |
-| Assistance coordinator | Assistance Inbox; Review Cases | Triage assistance and decision-review case statuses in assigned domains. |
+| Institutional records steward | Institutional Timeline | Record an existing, source-referenced institutional decision for independent certification. Cannot certify it, alter a policy, or create an exception. |
+| Assistance coordinator | Assistance Inbox; Review Cases; Institutional Timeline | Triage assigned casework and inspect institutional context in assigned domains. Cannot record or certify context events. |
 | Policy author | Handbook Intake; System Records; Policy Register; Shadow Calibration | Upload/review source material, submit mapping configurations, record policy ambiguities, prepare non-identifying calibration suites, and use the draft API. Cannot approve releases or certify their own calibration suite. |
 | Release approver | Handbook Intake; System Records; Policy Review; Policy Register; Shadow Calibration | Inspect source material, independently review mappings and calibration cases, inspect ambiguities, and approve a release. Cannot upload or revise a handbook source. |
-| Policy owner | Policy Register; Shadow Calibration | Record or resolve documented interpretations with an authoritative source; independently certify a calibration suite and classify its mismatches. A person cannot resolve their own ambiguity record or calibration suite. |
+| Policy owner | Policy Register; Shadow Calibration; Institutional Timeline | Record or resolve documented interpretations with an authoritative source; independently certify a calibration suite, classify its mismatches, and certify or reject a context record. A person cannot resolve or certify their own record. |
 | Auditor | Governance Desk; Handbook Intake; System Records; Assistance Inbox; Policy Review; Policy Register; Shadow Calibration | Read-only inspection of configured controls, source material, mapping records, casework, policy review, interpretation records, and calibration reports. |
 | Tenant administrator | All staff pages | Break-glass administration across the tenant. The release and mapping workflows still enforce separation of duties. |
 
@@ -86,6 +94,10 @@ owns the evidence; a real operational evaluation flow is still to be built.
   submission, independently certified, and recorded as a single immutable
   non-operative run. The author cannot certify their own suite or classify its
   mismatches.
+- Institutional context events require an authority and source decision
+  reference, remain immutable after submission, and have an append-only
+  independent certification trail. Subject views exclude staff-only events and
+  internal references.
 - Public assistance has rate limiting, retention fields, and an offline or
   assisted-route configuration. Decision-review cases are subject-owned and
   append their lifecycle history.
@@ -104,6 +116,11 @@ owns the evidence; a real operational evaluation flow is still to be built.
   notification service.
 - It does not perform a live system-of-record import, automated handbook-to-
   rule conversion, or external workflow write-back.
+- It does not automatically ingest transcripts, committee decisions, emails, or
+  historic records into the Institutional Timeline. Staff must first record and
+  certify context with institution-approved source references.
+- Certified context is not yet an evaluator input. It explains history but does
+  not automatically grant an exception or change an operative decision.
 - It does not detect all personal information entered by a staff member. Its
   calibration route therefore accepts only non-identifying case references and
   requires institutional privacy approval before de-identified historical data

@@ -4,10 +4,12 @@ import { DecisionReviewInbox } from './components/DecisionReviewInbox';
 import { GovernanceDesk } from './components/GovernanceDesk';
 import { HandbookIntake } from './components/HandbookIntake';
 import { InstitutionalIntake } from './components/InstitutionalIntake';
+import { InstitutionalTimeline } from './components/InstitutionalTimeline';
 import { PolicyAmbiguityRegister } from './components/PolicyAmbiguityRegister';
 import { PolicyReview } from './components/PolicyReview';
 import { PublicPolicyGuide } from './components/PublicPolicyGuide';
 import { SubjectPositionView } from './components/SubjectPositionView';
+import { SubjectInstitutionalTimeline } from './components/SubjectInstitutionalTimeline';
 import { ShadowCalibration } from './components/ShadowCalibration';
 import { SystemRecordImport } from './components/SystemRecordImport';
 import { fetchReasoningGraph, fetchSessionCapabilities } from './api/client';
@@ -17,6 +19,7 @@ import {
   ClipboardCheck,
   Files,
   Inbox,
+  Landmark,
   MessageSquareWarning,
   Scale,
   ShieldCheck,
@@ -34,7 +37,8 @@ type ActiveView =
   | 'policy_ambiguities'
   | 'handbook_intake'
   | 'record_import'
-  | 'shadow_calibration';
+  | 'shadow_calibration'
+  | 'institutional_timeline';
 
 type NavigationItem = {
   view: ActiveView;
@@ -52,6 +56,7 @@ const navigationItems: NavigationItem[] = [
   { view: 'policy_review', label: 'Policy Review', icon: ClipboardCheck },
   { view: 'policy_ambiguities', label: 'Policy Register', icon: Scale },
   { view: 'shadow_calibration', label: 'Shadow Calibration', icon: TestTube2 },
+  { view: 'institutional_timeline', label: 'Institutional Timeline', icon: Landmark },
 ];
 
 const viewHeading: Record<ActiveView, [string, string]> = {
@@ -64,6 +69,7 @@ const viewHeading: Record<ActiveView, [string, string]> = {
   handbook_intake: ['Handbook Intake', 'Source Verification'],
   record_import: ['System Records', 'CSV Preview'],
   shadow_calibration: ['Shadow Calibration', 'Non-operative Comparison'],
+  institutional_timeline: ['Institutional Timeline', 'Context History'],
 };
 
 function isActiveView(value: string): value is ActiveView {
@@ -134,11 +140,11 @@ function App() {
           <header className="border-b border-border pb-5">
             <h1 className="text-xl font-semibold">{requestedTraceId ? 'Decision review' : 'Your institutional information'}</h1>
           </header>
-          {!requestedTraceId && <div className="py-6"><PublicPolicyGuide /></div>}
+          {!requestedTraceId && <div className="flex flex-col gap-10 py-6"><SubjectInstitutionalTimeline /><PublicPolicyGuide /></div>}
           {requestedTraceId && graphLoading && <p className="py-8 text-sm text-muted">Loading your decision...</p>}
           {requestedTraceId && graphError && <div role="alert" className="mt-6 border border-rose-200 bg-rose-50 px-3 py-3 text-sm text-rose-700">{graphError}</div>}
           {requestedTraceId && !graphLoading && !graphError && !graph && <p className="py-8 text-sm text-muted">No decision was selected.</p>}
-          {requestedTraceId && !graphLoading && graph && <SubjectPositionView graph={graph} />}
+          {requestedTraceId && !graphLoading && graph && <div className="flex flex-col gap-10"><SubjectPositionView graph={graph} /><SubjectInstitutionalTimeline /></div>}
         </div>
       </main>
     );
@@ -157,6 +163,8 @@ function App() {
   const canCreateCalibration = isTenantAdmin || capabilities.role === 'rule_author';
   const canCertifyCalibration = isTenantAdmin || capabilities.role === 'rule_approver' || capabilities.role === 'policy_owner';
   const canResolveCalibrationMismatch = isTenantAdmin || capabilities.role === 'rule_approver' || capabilities.role === 'policy_owner';
+  const canRecordInstitutionalContext = isTenantAdmin || capabilities.role === 'institutional_records_steward';
+  const canAttestInstitutionalContext = isTenantAdmin || capabilities.role === 'policy_owner';
 
   if (!activeView) {
     return <main className="min-h-screen bg-white px-4 py-8 sm:px-8"><div role="alert" className="mx-auto max-w-5xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">This account does not have access to an operational workspace.</div></main>;
@@ -202,6 +210,7 @@ function App() {
           {activeView === 'handbook_intake' && <HandbookIntake canManageSource={canManageHandbook} />}
           {activeView === 'record_import' && <SystemRecordImport />}
           {activeView === 'shadow_calibration' && <ShadowCalibration canCreate={canCreateCalibration} canCertify={canCertifyCalibration} canResolveMismatch={canResolveCalibrationMismatch} />}
+          {activeView === 'institutional_timeline' && <InstitutionalTimeline canRecord={canRecordInstitutionalContext} canAttest={canAttestInstitutionalContext} />}
         </div>
       </main>
     </div>

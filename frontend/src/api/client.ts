@@ -223,6 +223,69 @@ export interface RecordImportField {
     schema_type: 'string' | 'number' | 'boolean';
 }
 
+export type InstitutionalContextEventType =
+    | 'CONCESSION'
+    | 'CURRICULUM_APPLICABILITY'
+    | 'ASSESSMENT_ACCOMMODATION'
+    | 'APPEAL_OUTCOME'
+    | 'REGISTRATION_POSITION'
+    | 'PROGRESSION_POSITION'
+    | 'GRADUATION_POSITION'
+    | 'OTHER';
+export type InstitutionalContextVisibility = 'SUBJECT' | 'STAFF_ONLY';
+export type InstitutionalContextStatus = 'SUBMITTED' | 'CERTIFIED' | 'REJECTED';
+export type InstitutionalContextTimelineState = InstitutionalContextStatus | 'ACTIVE' | 'SUPERSEDED' | 'REVOKED' | 'EXPIRED';
+
+export interface InstitutionalContextEventInput {
+    domain_id: string;
+    subject_id: string;
+    event_type: InstitutionalContextEventType;
+    title: string;
+    student_summary: string;
+    institutional_effect: string;
+    authority_name: string;
+    authority_reference: string;
+    source_reference: string;
+    event_date: string;
+    effective_from: string;
+    effective_until?: string;
+    visibility: InstitutionalContextVisibility;
+    policy_release_id?: string;
+    policy_citation?: string;
+    predecessor_event_id?: string;
+    predecessor_relationship?: 'SUPERSEDES' | 'REVOKES';
+}
+
+export interface InstitutionalContextEvent {
+    event_id: string;
+    domain_id: string;
+    subject_id?: string;
+    event_type: InstitutionalContextEventType;
+    title: string;
+    student_summary: string;
+    institutional_effect: string;
+    authority_name: string;
+    authority_reference?: string;
+    source_reference?: string;
+    event_date: string;
+    effective_from: string;
+    effective_until?: string | null;
+    visibility: InstitutionalContextVisibility;
+    policy_release_id?: string | null;
+    policy_release_version?: string | null;
+    policy_citation?: string | null;
+    predecessor_event_id?: string | null;
+    predecessor_relationship?: 'SUPERSEDES' | 'REVOKES' | null;
+    status: InstitutionalContextStatus;
+    timeline_state: InstitutionalContextTimelineState;
+    input_sha256?: string;
+    recorded_by?: string;
+    attested_by?: string | null;
+    attestation_note?: string | null;
+    attested_at?: string | null;
+    created_at?: string | null;
+}
+
 export type CalibrationDecision = 'ELIGIBLE' | 'INELIGIBLE' | 'NEEDS_MANUAL_REVIEW';
 export type CalibrationDataBasis = 'SYNTHETIC' | 'APPROVED_DEIDENTIFIED';
 export type CalibrationSuiteStatus = 'SUBMITTED' | 'CERTIFIED' | 'COMPLETED';
@@ -610,6 +673,42 @@ export const fetchAdminDomains = async (): Promise<AdminDomain[]> => {
 export const fetchRecordImportFields = async (domainId: string): Promise<RecordImportField[]> => {
     const response = await apiClient.get<{ items: RecordImportField[] }>(`/admin/domains/${domainId}/record-import-fields`);
     return response.data.items;
+}
+
+export const fetchSubjectInstitutionalTimeline = async (): Promise<InstitutionalContextEvent[]> => {
+    const response = await apiClient.get<{ items: InstitutionalContextEvent[] }>('/institutional-timeline');
+    return response.data.items;
+}
+
+export const fetchStaffInstitutionalTimeline = async (
+    domainId: string,
+    subjectId: string,
+): Promise<InstitutionalContextEvent[]> => {
+    const response = await apiClient.get<{ items: InstitutionalContextEvent[] }>('/governance/institutional-timeline', {
+        params: { domain_id: domainId, subject_id: subjectId },
+    });
+    return response.data.items;
+}
+
+export const createInstitutionalContextEvent = async (
+    payload: InstitutionalContextEventInput,
+): Promise<InstitutionalContextEvent> => {
+    const response = await apiClient.post<InstitutionalContextEvent>('/governance/institutional-context-events', payload);
+    return response.data;
+}
+
+export const attestInstitutionalContextEvent = async (
+    eventId: string,
+    domainId: string,
+    action: 'CERTIFY' | 'REJECT',
+    note: string,
+): Promise<InstitutionalContextEvent> => {
+    const response = await apiClient.post<InstitutionalContextEvent>(`/governance/institutional-context-events/${eventId}/attest`, {
+        domain_id: domainId,
+        action,
+        note,
+    });
+    return response.data;
 }
 
 export const fetchCalibrationReleases = async (domainId: string): Promise<CalibrationRelease[]> => {

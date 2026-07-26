@@ -23,6 +23,7 @@ class InterfaceCapabilities(TypedDict):
 _ROLE_LABELS: dict[Role, str] = {
     Role.TENANT_ADMIN: "Tenant administrator",
     Role.METADATA_STEWARD: "Metadata steward",
+    Role.INSTITUTIONAL_RECORDS_STEWARD: "Institutional records steward",
     Role.ASSISTANCE_COORDINATOR: "Assistance coordinator",
     Role.RULE_AUTHOR: "Policy author",
     Role.RULE_APPROVER: "Release approver",
@@ -44,13 +45,15 @@ _STAFF_VIEWS: dict[Role, tuple[str, ...]] = {
         "policy_review",
         "policy_ambiguities",
         "shadow_calibration",
+        "institutional_timeline",
     ),
     Role.METADATA_STEWARD: ("governance",),
-    Role.ASSISTANCE_COORDINATOR: ("assistance_inbox", "decision_review_inbox"),
+    Role.INSTITUTIONAL_RECORDS_STEWARD: ("institutional_timeline",),
+    Role.ASSISTANCE_COORDINATOR: ("assistance_inbox", "decision_review_inbox", "institutional_timeline"),
     Role.RULE_AUTHOR: ("handbook_intake", "record_import", "policy_ambiguities", "shadow_calibration"),
     Role.RULE_APPROVER: ("handbook_intake", "record_import", "policy_review", "policy_ambiguities", "shadow_calibration"),
-    Role.POLICY_OWNER: ("policy_ambiguities", "shadow_calibration"),
-    Role.AUDITOR: ("governance", "handbook_intake", "record_import", "assistance_inbox", "policy_review", "policy_ambiguities", "shadow_calibration"),
+    Role.POLICY_OWNER: ("policy_ambiguities", "shadow_calibration", "institutional_timeline"),
+    Role.AUDITOR: ("governance", "handbook_intake", "record_import", "assistance_inbox", "policy_review", "policy_ambiguities", "shadow_calibration", "institutional_timeline"),
 }
 
 

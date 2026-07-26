@@ -487,6 +487,81 @@ class DBRelease(Base):
     applicability = Column(JSONType, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
+
+class DBInstitutionalContextEvent(Base):
+    """A governed record explaining how institutional history affects one subject."""
+
+    __tablename__ = 'institutional_context_events'
+    __table_args__ = (
+        CheckConstraint(
+            "event_type IN ('CONCESSION', 'CURRICULUM_APPLICABILITY', 'ASSESSMENT_ACCOMMODATION', "
+            "'APPEAL_OUTCOME', 'REGISTRATION_POSITION', 'PROGRESSION_POSITION', 'GRADUATION_POSITION', 'OTHER')",
+            name='ck_institutional_context_event_type',
+        ),
+        CheckConstraint("visibility IN ('SUBJECT', 'STAFF_ONLY')", name='ck_institutional_context_visibility'),
+        CheckConstraint("status IN ('SUBMITTED', 'CERTIFIED', 'REJECTED')", name='ck_institutional_context_status'),
+        CheckConstraint(
+            "effective_until IS NULL OR effective_until >= effective_from",
+            name='ck_institutional_context_effective_period',
+        ),
+        CheckConstraint(
+            "predecessor_relationship IN ('SUPERSEDES', 'REVOKES') OR predecessor_relationship IS NULL",
+            name='ck_institutional_context_predecessor_relationship',
+        ),
+        CheckConstraint(
+            "(predecessor_event_id IS NULL AND predecessor_relationship IS NULL) "
+            "OR (predecessor_event_id IS NOT NULL AND predecessor_relationship IS NOT NULL)",
+            name='ck_institutional_context_predecessor_pair',
+        ),
+    )
+
+    id = Column(String, primary_key=True)
+    tenant_id = Column(String, nullable=False, index=True)
+    domain_id = Column(String, ForeignKey('domains.id'), nullable=False, index=True)
+    subject_id = Column(String, nullable=False, index=True)
+    event_type = Column(String, nullable=False)
+    title = Column(String, nullable=False)
+    student_summary = Column(Text, nullable=False)
+    institutional_effect = Column(Text, nullable=False)
+    authority_name = Column(String, nullable=False)
+    authority_reference = Column(String, nullable=False)
+    source_reference = Column(Text, nullable=False)
+    event_date = Column(Date, nullable=False)
+    effective_from = Column(Date, nullable=False)
+    effective_until = Column(Date, nullable=True)
+    visibility = Column(String, nullable=False, default="SUBJECT")
+    policy_release_id = Column(String, ForeignKey('releases.id'), nullable=True, index=True)
+    policy_citation = Column(Text, nullable=True)
+    predecessor_event_id = Column(String, ForeignKey('institutional_context_events.id'), nullable=True, index=True)
+    predecessor_relationship = Column(String, nullable=True)
+    status = Column(String, nullable=False, default="SUBMITTED", index=True)
+    input_sha256 = Column(String, nullable=False)
+    recorded_by = Column(String, nullable=False)
+    attested_by = Column(String, nullable=True)
+    attestation_note = Column(Text, nullable=True)
+    attested_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class DBInstitutionalContextEventAttestation(Base):
+    """Append-only evidence that an institutional context record was reviewed."""
+
+    __tablename__ = 'institutional_context_event_attestations'
+    __table_args__ = (
+        UniqueConstraint('context_event_id', 'sequence', name='uq_institutional_context_attestation_sequence'),
+        CheckConstraint("action IN ('SUBMITTED', 'CERTIFIED', 'REJECTED')", name='ck_institutional_context_attestation_action'),
+    )
+
+    id = Column(String, primary_key=True)
+    context_event_id = Column(String, ForeignKey('institutional_context_events.id'), nullable=False, index=True)
+    tenant_id = Column(String, nullable=False, index=True)
+    domain_id = Column(String, nullable=False, index=True)
+    sequence = Column(Integer, nullable=False)
+    action = Column(String, nullable=False)
+    actor_id = Column(String, nullable=False)
+    note = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
 class DBRuleGraph(Base):
     __tablename__ = 'rule_graphs'
     id = Column(String, primary_key=True)

@@ -36,6 +36,8 @@ from app.infrastructure.repositories import (
     HandbookUploadConflictError,
     InstitutionalInputConflictError,
     InstitutionalInputRepository,
+    InstitutionalContextEventConflictError,
+    InstitutionalContextEventRepository,
     GovernancePublicationBusyError,
     MetadataGovernanceRepository,
     PublicAccessRepository,
@@ -97,6 +99,10 @@ from app.services.shadow_calibration import (
     ShadowCalibrationSuiteInput,
     build_rehearsal_suite,
     validate_cases_against_domain_fields,
+)
+from app.services.institutional_timeline import (
+    InstitutionalContextAttestationRequest,
+    InstitutionalContextEventInput,
 )
 from app.sdk.pilot_rehearsal import run_pilot_rehearsal
 from app.services.ocr_provider import is_configured as ocr_provider_is_configured
@@ -977,6 +983,7 @@ async def list_admin_domains(
     user: UserIdentity = Depends(require_role([
         Role.TENANT_ADMIN,
         Role.METADATA_STEWARD,
+        Role.INSTITUTIONAL_RECORDS_STEWARD,
         Role.ASSISTANCE_COORDINATOR,
         Role.RULE_AUTHOR,
         Role.RULE_APPROVER,
@@ -1013,13 +1020,13 @@ async def list_record_import_fields(
     return {"items": fields}
 
 
-async def _verified_calibration_release(
+async def _verified_governed_release(
     *,
     repository: ReleaseRepository,
     release_id: str,
     domain_id: str,
 ) -> tuple[Release, RuleGraph]:
-    """Calibration only compares cases against a cryptographically verifiable release."""
+    """Only a cryptographically verifiable release may support governed records."""
     release = await repository.get_release_by_id(release_id)
     if release is None or release.domain_id != domain_id:
         raise HTTPException(status_code=404, detail="Approved policy release was not found for this domain.")
@@ -1030,7 +1037,7 @@ async def _verified_calibration_release(
     if not valid:
         raise HTTPException(
             status_code=409,
-            detail=f"This release cannot be used for shadow calibration: {reason}.",
+            detail=f"This release cannot support a governed institutional record: {reason}.",
         )
     return release, compiled_rule_graph
 
@@ -1040,6 +1047,7 @@ async def list_calibration_releases(
     domain_id: str,
     user: UserIdentity = Depends(require_role([
         Role.TENANT_ADMIN,
+        Role.INSTITUTIONAL_RECORDS_STEWARD,
         Role.RULE_AUTHOR,
         Role.RULE_APPROVER,
         Role.POLICY_OWNER,
@@ -1081,7 +1089,7 @@ async def create_shadow_calibration(
         raise HTTPException(status_code=404, detail="Decision domain was not found.")
     try:
         validate_cases_against_domain_fields(request.cases, fields)
-        await _verified_calibration_release(
+        await _verified_governed_release(
             repository=ReleaseRepository(db),
             release_id=request.release_id,
             domain_id=request.domain_id,
@@ -1220,7 +1228,7 @@ async def run_shadow_calibration(
     if suite is None:
         raise HTTPException(status_code=404, detail="Shadow calibration suite was not found.")
     try:
-        release, _ = await _verified_calibration_release(
+        release, _ = await _verified_governed_release(
             repository=ReleaseRepository(db),
             release_id=cast(str, suite["release_id"]),
             domain_id=request.domain_id,
@@ -1278,6 +1286,130 @@ async def resolve_shadow_calibration_finding(
     if finding is None:
         raise HTTPException(status_code=404, detail="Shadow calibration mismatch was not found.")
     return finding
+
+
+@app.post("/api/v1/governance/institutional-context-events", status_code=201)
+async def create_institutional_context_event(
+    request: InstitutionalContextEventInput,
+    user: UserIdentity = Depends(require_role([
+        Role.TENANT_ADMIN,
+        Role.INSTITUTIONAL_RECORDS_STEWARD,
+    ])),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Records an existing institutional decision for independent certification.
+
+    This route never grants an exception, changes an academic record, or changes
+    the evaluator. It makes an already-authorised decision explainable over time.
+    """
+    ensure_domain_access(user, request.domain_id)
+    fields = await InstitutionalInputRepository(db).list_domain_fact_fields(
+        tenant_id=user.tenant_id,
+        domain_id=request.domain_id,
+    )
+    if fields is None:
+        raise HTTPException(status_code=404, detail="Decision domain was not found.")
+    if request.policy_release_id:
+        await _verified_governed_release(
+            repository=ReleaseRepository(db),
+            release_id=request.policy_release_id,
+            domain_id=request.domain_id,
+        )
+    repository = InstitutionalContextEventRepository(db)
+    try:
+        event = await repository.create_event(
+            event_id="context_event_" + uuid.uuid4().hex,
+            tenant_id=user.tenant_id,
+            domain_id=request.domain_id,
+            subject_id=request.subject_id,
+            event_type=request.event_type,
+            title=request.title,
+            student_summary=request.student_summary,
+            institutional_effect=request.institutional_effect,
+            authority_name=request.authority_name,
+            authority_reference=request.authority_reference,
+            source_reference=request.source_reference,
+            event_date=request.event_date,
+            effective_from=request.effective_from,
+            effective_until=request.effective_until,
+            visibility=request.visibility,
+            policy_release_id=request.policy_release_id,
+            policy_citation=request.policy_citation,
+            predecessor_event_id=request.predecessor_event_id,
+            predecessor_relationship=request.predecessor_relationship,
+            recorded_by=user.user_id,
+        )
+    except InstitutionalContextEventConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return event
+
+
+@app.get("/api/v1/governance/institutional-timeline")
+async def get_staff_institutional_timeline(
+    subject_id: str,
+    domain_id: str,
+    user: UserIdentity = Depends(require_role([
+        Role.TENANT_ADMIN,
+        Role.INSTITUTIONAL_RECORDS_STEWARD,
+        Role.POLICY_OWNER,
+        Role.ASSISTANCE_COORDINATOR,
+        Role.AUDITOR,
+    ])),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Returns only a domain-assigned staff member's view of one subject's history."""
+    ensure_domain_access(user, domain_id)
+    return {
+        "items": await InstitutionalContextEventRepository(db).list_events(
+            tenant_id=user.tenant_id,
+            subject_id=subject_id,
+            domain_id=domain_id,
+            subject_safe=False,
+        )
+    }
+
+
+@app.post("/api/v1/governance/institutional-context-events/{event_id}/attest")
+async def attest_institutional_context_event(
+    event_id: str,
+    request: InstitutionalContextAttestationRequest,
+    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.POLICY_OWNER])),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Certifies or rejects a recorded institutional decision without rewriting it."""
+    ensure_domain_access(user, request.domain_id)
+    try:
+        event = await InstitutionalContextEventRepository(db).attest_event(
+            event_id=event_id,
+            tenant_id=user.tenant_id,
+            domain_id=request.domain_id,
+            actor_id=user.user_id,
+            action=request.action,
+            note=request.note,
+        )
+    except InstitutionalContextEventConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if event is None:
+        raise HTTPException(status_code=404, detail="Institutional context event was not found.")
+    return event
+
+
+@app.get("/api/v1/institutional-timeline")
+async def get_subject_institutional_timeline(
+    user: UserIdentity = Depends(require_role([Role.SUBJECT])),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """A subject-safe view of certified events that explain their current position."""
+    if not user.subject_id:
+        raise HTTPException(status_code=401, detail="Subject identity is missing from the access token.")
+    return {
+        "items": await InstitutionalContextEventRepository(db).list_events(
+            tenant_id=user.tenant_id,
+            subject_id=user.subject_id,
+            domain_id=None,
+            subject_safe=True,
+        )
+    }
 
 
 @app.post("/api/v1/admin/system-record-imports/preview")

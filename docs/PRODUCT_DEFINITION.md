@@ -34,7 +34,9 @@ experience and safety boundaries that follow from this principle.
 Opacity is the mechanism; legibility is the intervention.
 
 ```text
-Evidence
+Current decision path:
+
+Evidence + signed policy release
   -> extraction
   -> claims
   -> conflict resolution
@@ -48,6 +50,10 @@ Evidence
 Automated extraction is treated as untrusted source assistance. Policy logic,
 evaluation, and the explanation bound to an evaluation trace are deterministic;
 no model resolves policy logic or determines an outcome.
+
+Certified institutional context is currently retained alongside this path as
+temporal explanation. The target path may consume a named context type only
+when a future signed release explicitly authorises that effect.
 
 ## Proven In The Current Prototype
 
@@ -65,6 +71,13 @@ The actual API path has demonstrated:
 
 This establishes that the domain-neutral mechanism and governance gate work
 under the tested conditions.
+
+The prototype also preserves certified institutional context as temporal
+history: it can record why an authorised concession, appeal outcome, curriculum
+applicability decision, or assessment accommodation affected a subject's
+position, while retaining the original event when a later decision supersedes
+or revokes it. Context is currently explanatory only; a later signed-release
+integration is required before it can influence evaluation.
 
 ## Not Yet Proven
 

@@ -34,6 +34,7 @@ def validate_production_oidc_configuration() -> None:
 class Role(str, Enum):
     TENANT_ADMIN = "tenant_admin"
     METADATA_STEWARD = "metadata_steward"
+    INSTITUTIONAL_RECORDS_STEWARD = "institutional_records_steward"
     ASSISTANCE_COORDINATOR = "assistance_coordinator"
     RULE_AUTHOR = "rule_author"
     RULE_APPROVER = "rule_approver"
