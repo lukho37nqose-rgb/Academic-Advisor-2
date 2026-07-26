@@ -1,0 +1,21 @@
+# Direct dependency intent. Deployments install the generated requirements.txt
+# lockfile, never this unpinned source list.
+fastapi
+uvicorn
+pydantic
+sqlalchemy
+alembic
+pytest
+pytest-asyncio
+httpx
+cryptography
+PyJWT
+redis
+aiosqlite
+asyncpg
+aiobotocore
+openai
+instructor
+mypy
+pypdf
+python-multipart

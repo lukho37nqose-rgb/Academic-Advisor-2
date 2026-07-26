@@ -70,12 +70,24 @@ same API and may never expose this interface directly.
 
 ## Quickstart
 
+The supported runtime is CPython 3.12. `requirements.in` is the human-reviewed
+direct dependency list; `requirements.txt` is the generated, hash-locked
+deployment graph. Do not install from `requirements.in` for a normal run.
+
 ```powershell
-python -m pip install -r requirements.txt
+python -m pip install --require-hashes -r requirements.txt
 python -m alembic upgrade head
 python -m pytest -q
 python -m mypy --explicit-package-bases app
 python -m uvicorn app.api:app --reload
+```
+
+Refresh dependencies only through a reviewed change, then regenerate both
+artifacts:
+
+```powershell
+python tools/lock_python_dependencies.py
+python tools/generate_sbom.py --requirements requirements.txt --output sbom.cdx.json
 ```
 
 For an older local database created before Alembic was introduced, do not run

@@ -40,6 +40,11 @@ is switched.
 2. Store only secret references or runtime-injected secrets in deployment
    configuration. Never commit private keys, access tokens, source PDFs, or
    personal evidence to this repository or an image layer.
+   Deploy only from the reviewed `requirements.txt` hash lock and its committed
+   `sbom.cdx.json` CycloneDX inventory. `requirements.in` is source intent only;
+   it is not a deployable dependency manifest. Container and local
+   infrastructure image references are pinned by digest and updated through
+   reviewed automation.
 3. Run `python -m alembic upgrade head` as a separate, reviewed deployment job
    using a migration principal. The serving container must not migrate its own
    schema.

@@ -24,9 +24,13 @@ jobs:
         
     - name: Install dependencies
       run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
+        pip install --require-hashes -r requirements.txt
         pip check
+
+    - name: Verify software bill of materials
+      run: |
+        python tools/generate_sbom.py --requirements requirements.txt --output sbom.cdx.json
+        git diff --exit-code -- sbom.cdx.json
         
     - name: Banned Words Check (Domain Leakage)
       run: bash ./tools/banned_words_check.sh
@@ -86,7 +90,7 @@ jobs:
     timeout-minutes: 15
     services:
       postgres:
-        image: postgres:15-alpine
+        image: postgres:15-alpine@sha256:3d0f7584ed7d04e27fa050d6683a74746608faf21f202be78460d679cc56461f
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -114,8 +118,7 @@ jobs:
 
     - name: Install dependencies
       run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
+        pip install --require-hashes -r requirements.txt
         pip check
 
     - name: Rehearse PostgreSQL tenant isolation
