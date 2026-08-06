@@ -2,20 +2,23 @@
 
 ## Purpose
 
-The IRE does not replace an institution's system of record. It accepts a
-one-way export only after a rule author has submitted, and a different authorised
-reviewer has approved, a mapping from source columns to the minimal facts
-required by a decision domain.
-The current adapter supports a CSV export because it is inspectable, portable,
-and can be rehearsed without vendor credentials. It does not call a vendor API,
-write back to the source system, or persist a file during validation.
+The IRE does not replace an institution's system of record. It accepts source
+records only after an authorised editor has submitted, and a different
+authorised reviewer has approved, a mapping from source fields to the minimal
+facts required by a decision domain.
+The current adapter supports CSV because it is inspectable, portable, and can
+be rehearsed without vendor credentials. CSV is the fallback and test-fixture
+path, not the enterprise end state. The enterprise path is read-only connector
+access to an institution-approved source, with the same independent source and
+mapping review before records can become evidence. Neither path writes back to
+the source system.
 
 ## Governed mapping configurations
 
 The **System Records** staff screen lets an institution author a mapping using
 labelled inputs and facts declared by the chosen decision domain. No JSON or
 Python editing is required. Submitting the configuration creates an immutable
-`PENDING` mapping record and a `SUBMITTED` audit event. A `rule_approver` or
+`PENDING` mapping record and a `SUBMITTED` audit event. A `approver` or
 tenant administrator assigned to that domain can inspect the source columns and
 decision facts, then approve it or reject it with a required reason.
 
@@ -28,11 +31,13 @@ matching attributed terminal-review event. Both mapping tables have forced tenan
 serving connection can read or write only the tenant and domain named in its
 request context.
 
-The mapping record contains configuration metadata only: column names, fact
+The mapping record contains configuration metadata only: source field names,
+fact
 paths, type rules, reviewer attribution, timestamps, notes, and the contract
-digest. It does not retain CSV bytes, subject identifiers, source-record values,
-or a reconciliation snapshot. A rejected mapping is corrected by submitting a
-new configuration, never by editing the historical one.
+digest. It does not retain CSV bytes, connector payloads, subject identifiers,
+source-record values, or a reconciliation snapshot. A rejected mapping is
+corrected by submitting a new configuration, never by editing the historical
+one.
 
 ## Contract and preview
 
@@ -45,7 +50,7 @@ A mapping contract names:
 - file-size and row limits.
 
 `app.adapters.system_record_import` then creates an in-memory preview with
-SHA-256 digests for both the exact CSV bytes and the mapping contract. It rejects
+SHA-256 digests for both the exact source bytes and the mapping contract. It rejects
 non-UTF-8 files, missing or duplicate headers, missing required fields, invalid
 types, duplicate subject identifiers, malformed CSV, and row or size limits.
 The preview is all-or-nothing: any issue blocks materialisation as downstream
@@ -75,15 +80,18 @@ identifiers are available only in memory to an authorised integration process;
 they are excluded from serialised reconciliation output to avoid turning an
 operational report into a new personal-data store.
 
-## Production integration gate
+## Enterprise connector gate
 
 The reference frontend's **System Records** screen now creates and reviews this
 contract with labelled fields and a dry-run upload, so institutional staff do
 not edit JSON or Python. It offers only facts declared for the chosen domain,
-and the API independently rejects any undeclared target. A real connector is
-not ready until the system owner approves the source, identity matching,
+and the API independently rejects any undeclared target. A production connector
+is not enabled until the system owner approves the source, identity matching,
 incremental-export semantics, retry/idempotency behaviour, reconciliation owner,
 retention, encryption, service account, and incident path. A successful preview
-does not make an export authoritative, and it never creates an operative
-decision without the separate evidence, policy-release, and human-governance
-controls.
+does not itself make a source authoritative. A confirmed record materialised
+through an independently approved mapping creates accepted facts with that
+mapping review as its recorded acceptance authority. Provisional records,
+uploads, OCR, and manually entered information remain held evidence and require
+ordinary independent fact review. Neither path publishes policy or makes a
+decision during import.

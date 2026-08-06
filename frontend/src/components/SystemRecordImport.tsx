@@ -5,6 +5,10 @@ import {
   fetchAdminDomains,
   fetchRecordImportFields,
   fetchSystemRecordImportMappings,
+  fetchInstitutionalDataSources,
+  submitInstitutionalDataSource,
+  approveInstitutionalDataSource,
+  materializeSystemRecordImport,
   previewSystemRecordImport,
   rejectSystemRecordImportMapping,
   submitSystemRecordImportMapping,
@@ -14,6 +18,7 @@ import {
   type SystemRecordImportFieldMapping,
   type SystemRecordImportMapping,
   type SystemRecordImportPreview,
+  type InstitutionalDataSource,
 } from '../api/client';
 
 type ValueType = SystemRecordImportFieldMapping['value_type'];
@@ -21,7 +26,7 @@ type ValueType = SystemRecordImportFieldMapping['value_type'];
 function errorMessage(error: unknown) {
   const maybeAxios = error as { response?: { data?: { detail?: unknown } }; message?: string };
   const detail = maybeAxios.response?.data?.detail;
-  return typeof detail === 'string' ? detail : maybeAxios.message || 'The CSV export could not be checked.';
+  return typeof detail === 'string' ? detail : maybeAxios.message || 'The source record file could not be checked.';
 }
 
 function valueTypeForField(field?: RecordImportField): ValueType {
@@ -45,9 +50,21 @@ export function SystemRecordImport() {
   const [fields, setFields] = useState<RecordImportField[]>([]);
   const [mappingId, setMappingId] = useState('');
   const [sourceSystem, setSourceSystem] = useState('');
+  const [dataSources, setDataSources] = useState<InstitutionalDataSource[]>([]);
+  const [sourceId, setSourceId] = useState('');
+  const [newSourceName, setNewSourceName] = useState('');
+  const [newSourceOwner, setNewSourceOwner] = useState('');
+  const [newSourceKind, setNewSourceKind] = useState<InstitutionalDataSource['source_kind']>('SYSTEM_OF_RECORD');
+  const [newSourceAuthority, setNewSourceAuthority] = useState<InstitutionalDataSource['authority_level']>('AUTHORITATIVE');
+  const [newSourceRefreshHours, setNewSourceRefreshHours] = useState('24');
+  const [newConnectorKind, setNewConnectorKind] = useState<NonNullable<InstitutionalDataSource['connector_kind']>>('NONE');
+  const [newCredentialReference, setNewCredentialReference] = useState('');
+  const [newEndpointReference, setNewEndpointReference] = useState('');
+  const [newAllowedObject, setNewAllowedObject] = useState('');
   const [subjectColumn, setSubjectColumn] = useState('');
   const [versionColumn, setVersionColumn] = useState('');
   const [asOfColumn, setAsOfColumn] = useState('');
+  const [recordState, setRecordState] = useState<'confirmed' | 'provisional'>('confirmed');
   const [mappings, setMappings] = useState<SystemRecordImportFieldMapping[]>([]);
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(true);
@@ -57,6 +74,9 @@ export function SystemRecordImport() {
   const [savedMappings, setSavedMappings] = useState<SystemRecordImportMapping[]>([]);
   const [canSubmitMapping, setCanSubmitMapping] = useState(false);
   const [canReviewMapping, setCanReviewMapping] = useState(false);
+  const [canMaterialize, setCanMaterialize] = useState(false);
+  const [approvedFiles, setApprovedFiles] = useState<Record<string, File | null>>({});
+  const [materializingMappingId, setMaterializingMappingId] = useState<string | null>(null);
   const [rejectionReasons, setRejectionReasons] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -90,9 +110,12 @@ export function SystemRecordImport() {
       setPreview(null);
       try {
         const mappingList = await fetchSystemRecordImportMappings(domainId);
+        const loadedSources = await fetchInstitutionalDataSources(domainId);
+        setDataSources(loadedSources);
         setSavedMappings(mappingList.items);
         setCanSubmitMapping(mappingList.can_submit);
         setCanReviewMapping(mappingList.can_review);
+        setCanMaterialize(Boolean(mappingList.can_materialize));
         if (mappingList.can_submit) {
           const loadedFields = await fetchRecordImportFields(domainId);
           setFields(loadedFields);
@@ -122,10 +145,12 @@ export function SystemRecordImport() {
 
   const buildContract = (): SystemRecordImportContract => ({
     mapping_id: mappingId.trim(),
+    source_id: sourceId || undefined,
     source_system: sourceSystem.trim(),
     subject_identifier_column: subjectColumn.trim(),
     source_record_version_column: versionColumn.trim(),
     ...(asOfColumn.trim() ? { source_as_of_date_column: asOfColumn.trim() } : {}),
+    record_state: recordState,
     fields: mappings.map((mapping) => ({ ...mapping, source_column: mapping.source_column.trim() })),
   });
 
@@ -203,18 +228,40 @@ export function SystemRecordImport() {
   const loadSavedMapping = (saved: SystemRecordImportMapping) => {
     const contract = saved.contract;
     setMappingId(contract.mapping_id);
+    setSourceId(contract.source_id || '');
     setSourceSystem(contract.source_system);
     setSubjectColumn(contract.subject_identifier_column);
     setVersionColumn(contract.source_record_version_column);
     setAsOfColumn(contract.source_as_of_date_column || '');
+    setRecordState(contract.record_state || 'confirmed');
     setMappings(contract.fields);
     setPreview(null);
     setNotice(`Loaded ${saved.mapping_name} into the export check form.`);
   };
 
+  const materializeApprovedExport = async (saved: SystemRecordImportMapping) => {
+    const selectedFile = approvedFiles[saved.mapping_id];
+    if (!selectedFile) {
+      setError('Choose the approved source record file to import.');
+      return;
+    }
+    setMaterializingMappingId(saved.mapping_id);
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await materializeSystemRecordImport(domainId, saved.mapping_id, selectedFile);
+      setNotice(`${result.evidence_created} record${result.evidence_created === 1 ? '' : 's'} imported. ${result.already_imported ? `${result.already_imported} already imported. ` : ''}${result.fact_acceptance}`);
+    } catch (requestError) {
+      setError(errorMessage(requestError));
+    } finally {
+      setMaterializingMappingId(null);
+    }
+  };
+
   const readyToConfigure = Boolean(
     domainId
     && mappingId.trim().length >= 3
+    && sourceId.length > 0
     && sourceSystem.trim().length >= 2
     && subjectColumn.trim()
     && versionColumn.trim()
@@ -227,14 +274,49 @@ export function SystemRecordImport() {
     && file
   );
 
+  const registerSource = async () => {
+    if (!domainId || !newSourceName.trim() || !newSourceOwner.trim()) return;
+    setError(null); setNotice(null);
+    try {
+      const connectorPayload = newConnectorKind === 'NONE' ? {} : {
+        connector_kind: newConnectorKind,
+        credential_reference: newCredentialReference.trim(),
+        endpoint_reference: newEndpointReference.trim(),
+        allowed_object: newAllowedObject.trim(),
+      };
+      const source = await submitInstitutionalDataSource({ domain_id: domainId, display_name: newSourceName.trim(), source_owner: newSourceOwner.trim(), source_kind: newSourceKind, authority_level: newSourceAuthority, expected_refresh_hours: Number(newSourceRefreshHours) || undefined, ...connectorPayload });
+      setDataSources((current) => [source, ...current]);
+      setNewSourceName(''); setNewSourceOwner(''); setNewConnectorKind('NONE'); setNewCredentialReference(''); setNewEndpointReference(''); setNewAllowedObject('');
+      setNotice(`${source.display_name} was submitted for independent source approval.`);
+    } catch (requestError) { setError(errorMessage(requestError)); }
+  };
+
+  const sourceRegistrationReady = Boolean(
+    newSourceName.trim()
+    && newSourceOwner.trim()
+    && (
+      newConnectorKind === 'NONE'
+      || (newCredentialReference.trim() && newEndpointReference.trim() && newAllowedObject.trim())
+    )
+  );
+
+  const approveSource = async (source: InstitutionalDataSource) => {
+    setError(null); setNotice(null);
+    try {
+      const approved = await approveInstitutionalDataSource(source.source_id, domainId);
+      setDataSources((current) => current.map((item) => item.source_id === approved.source_id ? approved : item));
+      setNotice(`${approved.display_name} was approved as an institutional data source.`);
+    } catch (requestError) { setError(errorMessage(requestError)); }
+  };
+
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 py-4">
       <section className="border-b border-border pb-5">
         <div className="flex items-center gap-3">
           <FileSpreadsheet className="h-5 w-5 text-muted" />
           <div>
-            <h2 className="text-2xl font-semibold">System record import</h2>
-            <p className="mt-1 text-sm text-muted">Check a CSV export before any evidence import</p>
+            <h2 className="text-2xl font-semibold">System record intake</h2>
+            <p className="mt-1 text-sm text-muted">Prepare governed source records before they become evidence</p>
           </div>
         </div>
       </section>
@@ -243,8 +325,44 @@ export function SystemRecordImport() {
       {notice && <div role="status" className="flex items-start gap-2 border border-emerald-200 bg-emerald-50 px-3 py-3 text-sm text-emerald-800"><CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />{notice}</div>}
       {loading && <p className="flex items-center gap-2 py-6 text-sm text-muted"><LoaderCircle className="h-4 w-4 animate-spin" />Loading import fields...</p>}
 
+      {!loading && !canSubmitMapping && canReviewMapping && (
+        <section className="grid gap-3 border-b border-border pb-6">
+          <div><h3 className="text-base font-semibold">Sources awaiting approval</h3><p className="mt-1 text-sm text-muted">Confirm the source owner and whether it may provide confirmed or provisional information.</p></div>
+          {dataSources.filter((source) => source.status === 'PENDING').length === 0 ? <p className="text-sm text-muted">There are no source declarations awaiting your review.</p> : dataSources.filter((source) => source.status === 'PENDING').map((source) => <div key={source.source_id} className="flex flex-wrap items-center justify-between gap-3 border-b border-border py-2 text-sm"><span><span className="font-medium">{source.display_name}</span><span className="ml-2 text-muted">{source.authority_level.toLowerCase()} · {source.source_owner}</span></span><button type="button" onClick={() => void approveSource(source)} className="rounded border border-border px-2 py-1 font-medium hover:bg-accent">Approve source</button></div>)}
+        </section>
+      )}
+
       {!loading && canSubmitMapping && (
         <form onSubmit={submit} className="grid gap-7">
+          <section className="grid gap-4 border-b border-border pb-6">
+            <div><h3 className="text-base font-semibold">Institutional data sources</h3><p className="mt-1 text-sm text-muted">Declare what a source is allowed to mean before its records can inform a decision.</p></div>
+            <div className="grid gap-3 sm:grid-cols-6">
+              <input aria-label="Data source name" value={newSourceName} onChange={(event) => setNewSourceName(event.target.value)} placeholder="Authoritative system records" className="rounded border border-border px-3 py-2 text-sm outline-none focus:border-primary" />
+              <input aria-label="Data source owner" value={newSourceOwner} onChange={(event) => setNewSourceOwner(event.target.value)} placeholder="Registrar" className="rounded border border-border px-3 py-2 text-sm outline-none focus:border-primary" />
+              <select aria-label="Data source kind" value={newSourceKind} onChange={(event) => setNewSourceKind(event.target.value as InstitutionalDataSource['source_kind'])} className="rounded border border-border bg-white px-3 py-2 text-sm"><option value="SYSTEM_OF_RECORD">System of record</option><option value="LEARNING_PLATFORM">Learning platform</option><option value="DEPARTMENT_RECORD">Department record</option><option value="COMMITTEE_REGISTER">Committee register</option><option value="MANUAL">Verified manual record</option></select>
+              <select aria-label="Data source authority" value={newSourceAuthority} onChange={(event) => setNewSourceAuthority(event.target.value as InstitutionalDataSource['authority_level'])} className="rounded border border-border bg-white px-3 py-2 text-sm"><option value="AUTHORITATIVE">Authoritative</option><option value="WORKING">Working / provisional</option><option value="REFERENCE">Reference only</option></select>
+              <input aria-label="Expected source refresh hours" type="number" min="1" value={newSourceRefreshHours} onChange={(event) => setNewSourceRefreshHours(event.target.value)} className="rounded border border-border px-3 py-2 text-sm" />
+              <button type="button" onClick={() => void registerSource()} disabled={!sourceRegistrationReady} className="rounded border border-border px-3 py-2 text-sm font-medium hover:bg-accent disabled:opacity-40">Register source</button>
+            </div>
+            <div className="grid gap-3 border-l-2 border-border pl-4">
+              <label className="grid gap-2 text-sm font-medium">
+                Read-only connector
+                <select value={newConnectorKind} onChange={(event) => setNewConnectorKind(event.target.value as NonNullable<InstitutionalDataSource['connector_kind']>)} className="rounded border border-border bg-white px-3 py-2 font-normal outline-none focus:border-primary">
+                  <option value="NONE">File fallback for validation</option>
+                  <option value="REST_API">REST API</option>
+                  <option value="SFTP_PULL">Managed SFTP pull</option>
+                  <option value="DATABASE_VIEW">Read-only database view</option>
+                  <option value="VENDOR_API">Vendor API</option>
+                </select>
+              </label>
+              {newConnectorKind !== 'NONE' && <div className="grid gap-3 sm:grid-cols-3">
+                <input aria-label="Credential reference" value={newCredentialReference} onChange={(event) => setNewCredentialReference(event.target.value)} placeholder="Secrets Manager reference" className="rounded border border-border px-3 py-2 text-sm outline-none focus:border-primary" />
+                <input aria-label="Endpoint reference" value={newEndpointReference} onChange={(event) => setNewEndpointReference(event.target.value)} placeholder="Approved endpoint reference" className="rounded border border-border px-3 py-2 text-sm outline-none focus:border-primary" />
+                <input aria-label="Allowed source object" value={newAllowedObject} onChange={(event) => setNewAllowedObject(event.target.value)} placeholder="API scope, path, table, or view" className="rounded border border-border px-3 py-2 text-sm outline-none focus:border-primary" />
+              </div>}
+            </div>
+            {dataSources.length > 0 && <div className="grid gap-2 text-sm">{dataSources.map((source) => <div key={source.source_id} className="flex flex-wrap items-center justify-between gap-3 border-b border-border py-2"><span><span className="font-medium">{source.display_name}</span><span className="ml-2 text-muted">{source.authority_level.toLowerCase()} · {source.source_owner} · {source.status.toLowerCase()}</span></span>{canReviewMapping && source.status === 'PENDING' && <button type="button" onClick={() => void approveSource(source)} className="rounded border border-border px-2 py-1 text-sm font-medium hover:bg-accent">Approve source</button>}</div>)}</div>}
+          </section>
           <section className="grid gap-4 border-b border-border pb-6 sm:grid-cols-2">
             <label className="grid gap-2 text-sm font-medium">
               Decision domain
@@ -254,16 +372,31 @@ export function SystemRecordImport() {
               </select>
             </label>
             <label className="grid gap-2 text-sm font-medium">
-              CSV export
-              <input aria-label="CSV export" type="file" accept=".csv,text/csv" onChange={(event) => setFile(event.target.files?.[0] || null)} className="rounded border border-border px-3 py-2 text-sm file:mr-3 file:border-0 file:bg-accent file:px-2 file:py-1 file:text-sm file:font-medium" />
+              Source record file
+              <input aria-label="Source record file" type="file" accept=".csv,text/csv" onChange={(event) => setFile(event.target.files?.[0] || null)} className="rounded border border-border px-3 py-2 text-sm file:mr-3 file:border-0 file:bg-accent file:px-2 file:py-1 file:text-sm file:font-medium" />
             </label>
             <label className="grid gap-2 text-sm font-medium">
               Mapping name
               <input value={mappingId} onChange={(event) => setMappingId(event.target.value)} className="rounded border border-border px-3 py-2 font-normal outline-none focus:border-primary" />
             </label>
             <label className="grid gap-2 text-sm font-medium">
+              Approved institutional data source
+              <select value={sourceId} onChange={(event) => {
+                const selected = dataSources.find((source) => source.source_id === event.target.value);
+                setSourceId(event.target.value);
+                if (selected) {
+                  setSourceSystem(selected.display_name);
+                  setRecordState(selected.authority_level === 'AUTHORITATIVE' ? 'confirmed' : 'provisional');
+                }
+              }} className="rounded border border-border bg-white px-3 py-2 font-normal outline-none focus:border-primary">
+                <option value="">Choose an approved source</option>
+                {dataSources.filter((source) => source.status === 'APPROVED' && source.authority_level !== 'REFERENCE').map((source) => <option key={source.source_id} value={source.source_id}>{source.display_name} ({source.authority_level === 'AUTHORITATIVE' ? 'confirmed' : 'provisional'})</option>)}
+              </select>
+              {dataSources.filter((source) => source.status === 'APPROVED' && source.authority_level !== 'REFERENCE').length === 0 && <span className="font-normal text-amber-700">No approved source is available for this domain. Register and approve one before mapping an export.</span>}
+            </label>
+            <label className="grid gap-2 text-sm font-medium">
               Source system
-              <input value={sourceSystem} onChange={(event) => setSourceSystem(event.target.value)} className="rounded border border-border px-3 py-2 font-normal outline-none focus:border-primary" />
+              <input value={sourceSystem} readOnly aria-readonly="true" className="rounded border border-border bg-accent px-3 py-2 font-normal text-muted" />
             </label>
             <label className="grid gap-2 text-sm font-medium">
               Subject identifier column
@@ -276,6 +409,13 @@ export function SystemRecordImport() {
             <label className="grid gap-2 text-sm font-medium sm:col-span-2">
               Source as-of date column <span className="font-normal text-muted">Optional</span>
               <input value={asOfColumn} onChange={(event) => setAsOfColumn(event.target.value)} className="rounded border border-border px-3 py-2 font-normal outline-none focus:border-primary" />
+            </label>
+            <label className="grid gap-2 text-sm font-medium sm:col-span-2">
+              Record status when imported
+              <select value={recordState} onChange={(event) => setRecordState(event.target.value as 'confirmed' | 'provisional')} className="rounded border border-border bg-white px-3 py-2 font-normal outline-none focus:border-primary">
+                <option value="confirmed">Confirmed system record</option>
+                <option value="provisional">Current provisional record</option>
+              </select>
             </label>
           </section>
 
@@ -292,7 +432,7 @@ export function SystemRecordImport() {
               {mappings.map((mapping, index) => (
                 <div key={`${mapping.target_path}-${index}`} className="grid gap-3 border-b border-border pb-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_160px_auto_36px] md:items-end">
                   <label className="grid gap-2 text-sm font-medium">
-                    Export column name
+                    Source field or column name
                     <input value={mapping.source_column} onChange={(event) => updateMapping(index, { source_column: event.target.value })} className="rounded border border-border px-3 py-2 font-normal outline-none focus:border-primary" />
                   </label>
                   <label className="grid gap-2 text-sm font-medium">
@@ -330,7 +470,7 @@ export function SystemRecordImport() {
             </button>
             <button type="submit" disabled={!readyToPreview || previewing} className="inline-flex w-fit items-center gap-2 rounded bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary/90 disabled:opacity-40">
               {previewing && <LoaderCircle className="h-4 w-4 animate-spin" />}
-              {previewing ? 'Checking export...' : 'Check export'}
+              {previewing ? 'Checking source records...' : 'Check source records'}
             </button>
           </div>
         </form>
@@ -340,7 +480,7 @@ export function SystemRecordImport() {
         <section aria-labelledby="saved-mappings-heading" className="grid gap-4 border-t border-border pt-6">
           <div>
             <h3 id="saved-mappings-heading" className="text-base font-semibold">Saved mapping configurations</h3>
-            <p className="mt-1 text-sm text-muted">Configurations are retained for review. CSV exports and subject values are not retained here.</p>
+            <p className="mt-1 text-sm text-muted">Configurations are retained for review. Source files and subject values are not retained here.</p>
           </div>
           {savedMappings.length === 0 && <p className="text-sm text-muted">No mapping configurations have been submitted for this domain.</p>}
           {savedMappings.map((saved) => (
@@ -355,6 +495,7 @@ export function SystemRecordImport() {
               <dl className="grid gap-3 text-sm sm:grid-cols-2">
                 <div><dt className="text-xs font-medium uppercase text-muted">Subject column</dt><dd className="mt-1">{saved.contract.subject_identifier_column}</dd></div>
                 <div><dt className="text-xs font-medium uppercase text-muted">Version column</dt><dd className="mt-1">{saved.contract.source_record_version_column}</dd></div>
+                <div><dt className="text-xs font-medium uppercase text-muted">Imported status</dt><dd className="mt-1">{saved.contract.record_state === 'provisional' ? 'Provisional' : 'Confirmed'}</dd></div>
                 <div className="sm:col-span-2"><dt className="text-xs font-medium uppercase text-muted">Decision facts</dt><dd className="mt-1">{saved.contract.fields.map((field) => `${field.source_column} to ${field.target_path}`).join(', ')}</dd></div>
               </dl>
               {saved.review_note && <p className="border-l-2 border-border pl-3 text-sm text-muted">Review note: {saved.review_note}</p>}
@@ -367,6 +508,16 @@ export function SystemRecordImport() {
                   </button>
                 )}
               </div>
+              {canMaterialize && saved.status === 'APPROVED' && <div className="flex flex-wrap items-end gap-3 border-t border-border pt-4">
+                <label className="grid min-w-64 flex-1 gap-2 text-sm font-medium">
+                  Approved source record file
+                  <input aria-label={`Approved source record file for ${saved.mapping_name}`} type="file" accept=".csv,text/csv" onChange={(event) => setApprovedFiles((current) => ({ ...current, [saved.mapping_id]: event.target.files?.[0] || null }))} className="rounded border border-border px-3 py-2 text-sm file:mr-3 file:border-0 file:bg-accent file:px-2 file:py-1 file:text-sm file:font-medium" />
+                </label>
+                <button type="button" onClick={() => void materializeApprovedExport(saved)} disabled={materializingMappingId === saved.mapping_id} className="inline-flex items-center gap-2 rounded bg-primary px-3 py-2 text-sm font-medium text-white hover:bg-primary/90 disabled:opacity-40">
+                  {materializingMappingId === saved.mapping_id && <LoaderCircle className="h-4 w-4 animate-spin" />}
+                  {materializingMappingId === saved.mapping_id ? 'Importing...' : 'Preserve as evidence'}
+                </button>
+              </div>}
               {canReviewMapping && saved.status === 'PENDING' && (
                 <div className="flex flex-wrap items-end gap-3 border-t border-border pt-4">
                   <label className="grid min-w-64 flex-1 gap-2 text-sm font-medium">

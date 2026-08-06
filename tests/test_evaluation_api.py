@@ -8,12 +8,14 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.api import app
 from app.core.compiler import compile_release_to_graph
+from app.core.crypto import CryptoService
 from app.core.models import ReasoningGraph, Release
 from app.infrastructure.database import get_db_session
 from app.infrastructure.db import Base, DBDomain, DBTenant
 from app.infrastructure.blob_storage import BlobStorage
 from app.infrastructure.repositories import ReleaseRepository
 from app.services.auth import Role, UserIdentity, get_current_user
+from app.services.policy_source_manifest import build_policy_source_manifest
 
 
 async def _create_schema(engine) -> None:
@@ -38,6 +40,37 @@ def test_evaluation_persists_tenant_scoped_claims_and_facts(tmp_path, monkeypatc
         }
     }
     rule_graph = compile_release_to_graph("rel_eval", policy_payload)
+    source_manifest, source_manifest_hash = build_policy_source_manifest(policy_payload)
+    
+    payload = {
+        "policy": policy_payload,
+        "release": {
+            "id": "rel_eval",
+            "domain_id": "dom_curr_2026",
+            "version": "2026.1",
+            "rule_graph_id": rule_graph.id,
+            "effective_from": "2026-01-01",
+            "effective_until": "2026-12-31",
+            "applicability": {"entry_year": ["2026"]},
+            "source_manifest_hash": source_manifest_hash,
+        },
+        "source_manifest": source_manifest,
+    }
+    
+    # Generate a real signing key for the test
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.hazmat.primitives import serialization
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    pem = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption()
+    ).decode("utf-8")
+    monkeypatch.setenv("GOVERNANCE_PRIVATE_KEY", pem)
+    monkeypatch.setenv("GOVERNANCE_KEY_ID", "test-key-id")
+    
+    crypto = CryptoService()
+    signature, payload_hash = crypto.sign_payload(payload)
 
     async def _store_release() -> None:
         async with session_factory() as session:
@@ -70,10 +103,15 @@ def test_evaluation_persists_tenant_scoped_claims_and_facts(tmp_path, monkeypatc
                     domain_id="dom_curr_2026",
                     version="2026.1",
                     rule_graph_id=rule_graph.id,
-                    digital_signature="test_signature",
+                    digital_signature=signature,
+                    signed_payload=payload,
+                    signed_payload_hash=payload_hash,
+                    signing_key_id=crypto.key_id,
+                    signing_public_key=crypto.public_key_pem,
                     effective_from=date(2026, 1, 1),
                     effective_until=date(2026, 12, 31),
                     applicability={"entry_year": ["2026"]},
+                    source_manifest_hash=source_manifest_hash,
                 ),
                 rule_graph,
                 policy_payload["root"],
@@ -157,7 +195,7 @@ def test_evaluation_persists_tenant_scoped_claims_and_facts(tmp_path, monkeypatc
         )
         app.dependency_overrides[get_current_user] = lambda: UserIdentity(
             tenant_id="tenant_demo_uni",
-            role=Role.POLICY_OWNER,
+            role=Role.APPROVER,
             user_id="owner_1",
             domain_ids=["dom_curr_2026"],
         )
@@ -200,7 +238,7 @@ def test_evaluation_persists_tenant_scoped_claims_and_facts(tmp_path, monkeypatc
         )
         app.dependency_overrides[get_current_user] = lambda: UserIdentity(
             tenant_id="tenant_demo_uni",
-            role=Role.POLICY_OWNER,
+            role=Role.APPROVER,
             user_id="owner_1",
             domain_ids=["dom_curr_2026"],
         )

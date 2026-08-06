@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.api import app
 from app.core.models import EvaluationContext, Evidence, ReasoningGraph
 from app.infrastructure.database import get_db_session
-from app.infrastructure.db import Base, DBDomain, DBTenant
+from app.infrastructure.db import Base, DBDomain, DBInstitutionalDataSource, DBTenant
 from app.infrastructure.repositories import (
     DecisionReviewRepository,
     EvidenceRepository,
@@ -125,7 +125,7 @@ def test_subject_decision_review_preserves_original_trace_and_requires_reasoned_
 
         app.dependency_overrides[get_current_user] = lambda: UserIdentity(
             tenant_id="tenant_review",
-            role=Role.ASSISTANCE_COORDINATOR,
+            role=Role.STAFF_MEMBER,
             user_id="coordinator_1",
             domain_ids=["dom_review"],
         )
@@ -247,3 +247,100 @@ def test_decision_review_requires_a_domain_casework_commitment(tmp_path):
 
     assert response.status_code == 409
     assert "not enabled" in response.json()["detail"]
+
+
+def test_subject_current_positions_exposes_only_the_subjects_latest_trace(tmp_path):
+    database_path = tmp_path / "subject_positions.db"
+    engine = create_async_engine(f"sqlite+aiosqlite:///{database_path}")
+    session_factory = async_sessionmaker(bind=engine, expire_on_commit=False)
+    asyncio.run(_create_schema(engine))
+    asyncio.run(_store_subject_trace(session_factory))
+
+    async def _configure_and_add_newer_trace():
+        async with session_factory() as session:
+            domain = await session.get(DBDomain, "dom_review")
+            assert domain is not None
+            schema_definition = dict(domain.schema_definition)
+            schema_definition["student_position"] = {
+                "type": "curriculum",
+                "label": "Politics progression",
+            }
+            schema_definition["presentation"] = {
+                "governed_person_label": "student",
+                "position_collection_label": "academic positions",
+            }
+            schema_definition["casework"] = {
+                "primary_group": "Humanities Undergraduate Office",
+                "fallback_group": "Faculty casework team",
+                "escalation_after_hours": 48,
+            }
+            domain.schema_definition = schema_definition
+            session.add(DBInstitutionalDataSource(
+                id="source_progression", tenant_id="tenant_review", domain_id="dom_review",
+                display_name="Synthetic faculty record", source_kind="DEPARTMENT_RECORD",
+                authority_level="WORKING", source_owner="Humanities Undergraduate Office",
+                expected_refresh_hours=24, author_id="records_author", status="APPROVED",
+                reviewed_by="records_reviewer",
+            ))
+            graph = ReasoningGraph(
+                id="trace_review_newer",
+                subject_id="subject_1",
+                rule_graph_id="rule_graph_review",
+                evaluation_context=EvaluationContext(
+                    tenant_id="tenant_review",
+                    domain_id="dom_review",
+                    subject_id="subject_1",
+                    release_version="2026.2",
+                    source_authority="institutional_working_record",
+                    source_system="Synthetic faculty record",
+                    source_as_of=datetime(2026, 7, 25, 8, 30, tzinfo=timezone.utc),
+                ),
+            )
+            await ReasoningRepository(session).save_evaluation_artifacts(
+                graph=graph,
+                overall_decision="ELIGIBLE",
+                overall_confidence=0.95,
+                tenant_id="tenant_review",
+                domain_id="dom_review",
+                release_id="release_review_newer",
+                evidence_id="evidence_original",
+                claims=[],
+                facts=[],
+            )
+
+    asyncio.run(_configure_and_add_newer_trace())
+
+    async def _test_db_session():
+        async with session_factory() as session:
+            yield session
+
+    app.dependency_overrides[get_db_session] = _test_db_session
+    app.dependency_overrides[get_current_user] = _subject_identity
+    try:
+        response = TestClient(app).get("/api/v1/subject/current-positions")
+    finally:
+        app.dependency_overrides.clear()
+        asyncio.run(engine.dispose())
+
+    assert response.status_code == 200
+    assert response.json()["items"] == [{
+        "trace_id": "trace_review_newer",
+        "domain_id": "dom_review",
+        "domain_name": "Decision Review Domain",
+        "position_type": "curriculum",
+        "position_label": "Politics progression",
+        "governed_person_label": "student",
+        "position_collection_label": "academic positions",
+        "decision": "ELIGIBLE",
+        "release_version": "2026.2",
+        "evaluated_at": response.json()["items"][0]["evaluated_at"],
+        "source_authority": "institutional_working_record",
+        "record_state": "provisional",
+        "source_system": "Synthetic faculty record",
+        "source_as_of": "2026-07-25T08:30:00Z",
+        "source_expected_by": "2026-07-26T08:30:00+00:00",
+        "source_is_stale": True,
+        "responsible_group": "Humanities Undergraduate Office",
+        "fallback_group": "Faculty casework team",
+        "provisional_escalation_by": "2026-07-27T08:30:00+00:00",
+    }]

@@ -1,0 +1,18 @@
+environment     = "staging"
+api_image       = "123456789012.dkr.ecr.af-south-1.amazonaws.com/ire-api@sha256:replace-me"
+certificate_arn = "arn:aws:acm:af-south-1:123456789012:certificate/replace-me"
+api_hostname    = "ire-staging.example.ac.za"
+hosted_zone_id  = "Z000000000000000000"
+runtime_secret_values = {
+  JWT_JWKS_URL = "https://identity.example.ac.za/.well-known/jwks.json"
+  JWT_ISSUER = "https://identity.example.ac.za/"
+  JWT_AUDIENCE = "ire-api"
+  PUBLIC_RATE_LIMIT_SALT = "set-through-a-secure-ci-secret"
+  GOVERNANCE_PRIVATE_KEY = "set-through-a-secure-ci-secret"
+  GOVERNANCE_KEY_ID = "institution-staging-2026"
+  IRE_TENANT_CLAIM = "tenant_id"
+  IRE_ROLE_CLAIM = "role"
+  IRE_DOMAIN_IDS_CLAIM = "domain_ids"
+  IRE_SUBJECT_ID_CLAIM = "sub"
+  IRE_CORS_ALLOWED_ORIGINS = "https://frontend-staging.example.ac.za"
+}

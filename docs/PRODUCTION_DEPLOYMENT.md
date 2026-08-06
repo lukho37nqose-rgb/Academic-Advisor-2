@@ -59,8 +59,8 @@ is switched.
    release signature verification, source upload, independently reviewed fact
    acceptance, evidence-hash failure, verified replay, assistance route, a
    subject-owned decision-review case, and an idempotent retry.
-7. Enable shadow traffic only after the policy, privacy, accessibility, and
-   operational owners have accepted the pilot entry gates.
+7. Enable pre-production validation traffic only after the policy, privacy,
+   accessibility, and operational owners have accepted the pilot entry gates.
 
 ## Configuration and secret operations
 

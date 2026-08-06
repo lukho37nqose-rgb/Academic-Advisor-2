@@ -38,6 +38,40 @@ class DBTenant(Base):
     name = Column(String, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
+
+class DBProviderTenantControl(Base):
+    """Provider-owned operational metadata; it contains no student or policy data."""
+    __tablename__ = 'provider_tenant_controls'
+    __table_args__ = (
+        CheckConstraint("lifecycle_state IN ('PILOT', 'ACTIVE', 'SUSPENDED', 'DECOMMISSIONED')", name='ck_provider_tenant_lifecycle'),
+    )
+    tenant_id = Column(String, ForeignKey('tenants.id'), primary_key=True)
+    lifecycle_state = Column(String, nullable=False, default='PILOT', index=True)
+    service_tier = Column(String, nullable=False, default='pilot')
+    integration_status = Column(String, nullable=False, default='NOT_CONFIGURED')
+    integration_observed_at = Column(DateTime(timezone=True), nullable=True)
+    created_by = Column(String, nullable=False)
+    updated_by = Column(String, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class DBProviderSupportAccessRequest(Base):
+    """A non-operative request for exceptional support access, never an access grant."""
+    __tablename__ = 'provider_support_access_requests'
+    __table_args__ = (
+        CheckConstraint("status IN ('REQUESTED', 'APPROVED', 'REJECTED', 'CLOSED')", name='ck_provider_support_access_status'),
+    )
+    id = Column(String, primary_key=True)
+    tenant_id = Column(String, ForeignKey('tenants.id'), nullable=False, index=True)
+    requested_by = Column(String, nullable=False)
+    reason = Column(Text, nullable=False)
+    status = Column(String, nullable=False, default='REQUESTED', index=True)
+    approved_by = Column(String, nullable=True)
+    approved_at = Column(DateTime(timezone=True), nullable=True)
+    closed_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
 class DBDomain(Base):
     __tablename__ = 'domains'
     id = Column(String, primary_key=True)
@@ -59,12 +93,14 @@ class DBPolicyDraft(Base):
     author_id = Column(String, nullable=False)
     payload = Column(JSONType, nullable=False)
     status = Column(String, nullable=False, default="PENDING")  # PENDING | RELEASED | REJECTED
+    approved_by = Column(String, nullable=True)
+    approved_at = Column(DateTime(timezone=True), nullable=True)
     released_as_release_id = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
 class DBPolicyAmbiguity(Base):
-    """A governed unresolved interpretation that must be settled before release."""
+    """A governed unresolved interpretation scoped to affected policy facts."""
     __tablename__ = 'policy_ambiguities'
 
     id = Column(String, primary_key=True)
@@ -73,6 +109,7 @@ class DBPolicyAmbiguity(Base):
     source_citation = Column(Text, nullable=False)
     question = Column(Text, nullable=False)
     interpretation_options = Column(JSONType, nullable=False)
+    affected_target_paths = Column(JSONType, nullable=False, default=list)
     status = Column(String, nullable=False, default="OPEN", index=True)
     resolution = Column(Text, nullable=True)
     resolution_source_reference = Column(Text, nullable=True)
@@ -186,6 +223,10 @@ class DBHandbookPage(Base):
     page_number = Column(Integer, nullable=False)
     text_content = Column(Text, nullable=False)
     content_hash = Column(String, nullable=False)
+    # Triage is advisory only. It helps route human attention and never makes
+    # a page or a rule authoritative.
+    extraction_kind = Column(String, nullable=False, default="SELECTABLE_TEXT")
+    review_priority = Column(String, nullable=False, default="NORMAL")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -201,8 +242,14 @@ class DBHandbookOcrReview(Base):
     page_number = Column(Integer, nullable=False)
     provider_name = Column(String, nullable=False)
     provider_reference = Column(String, nullable=True)
+    provider_model_version = Column(String, nullable=True)
+    provider_response_hash = Column(String, nullable=True)
+    source_page_hash = Column(String, nullable=False)
     proposed_text = Column(Text, nullable=False)
     proposed_text_hash = Column(String, nullable=False)
+    proposed_blocks = Column(JSON, nullable=True)
+    quality_signals = Column(JSON, nullable=True)
+    review_priority = Column(String, nullable=False, default="NORMAL")
     status = Column(String, nullable=False, default="PENDING_REVIEW")
     reviewed_text = Column(Text, nullable=True)
     reviewed_by = Column(String, nullable=True)
@@ -313,11 +360,47 @@ class DBSystemRecordImportMapping(Base):
     tenant_id = Column(String, ForeignKey('tenants.id'), nullable=False, index=True)
     domain_id = Column(String, ForeignKey('domains.id'), nullable=False, index=True)
     mapping_name = Column(String, nullable=False)
+    source_id = Column(String, nullable=True, index=True)
     source_system = Column(String, nullable=False)
     contract = Column(JSONType, nullable=False)
     contract_sha256 = Column(String, nullable=False)
     author_id = Column(String, nullable=False)
     status = Column(String, nullable=False, default='PENDING', index=True)
+    reviewed_by = Column(String, nullable=True)
+    reviewed_at = Column(DateTime(timezone=True), nullable=True)
+    review_note = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class DBInstitutionalDataSource(Base):
+    """A reviewed declaration of what a named institutional source may mean."""
+    __tablename__ = 'institutional_data_sources'
+    __table_args__ = (
+        CheckConstraint("source_kind IN ('SYSTEM_OF_RECORD', 'LEARNING_PLATFORM', 'DEPARTMENT_RECORD', 'COMMITTEE_REGISTER', 'MANUAL')", name='ck_institutional_data_source_kind'),
+        CheckConstraint("authority_level IN ('AUTHORITATIVE', 'WORKING', 'REFERENCE')", name='ck_institutional_data_source_authority'),
+        CheckConstraint("status IN ('PENDING', 'APPROVED', 'REJECTED', 'RETIRED')", name='ck_institutional_data_source_status'),
+        CheckConstraint("connector_kind IN ('NONE', 'REST_API', 'SFTP_PULL', 'DATABASE_VIEW', 'VENDOR_API')", name='ck_institutional_data_source_connector_kind'),
+        CheckConstraint("connector_status IN ('NOT_CONFIGURED', 'CONFIGURED', 'TEST_FAILED', 'APPROVED', 'PAUSED', 'RETIRED')", name='ck_institutional_data_source_connector_status'),
+        CheckConstraint("expected_refresh_hours IS NULL OR expected_refresh_hours > 0", name='ck_institutional_data_source_refresh'),
+        Index('ix_institutional_data_sources_tenant_domain', 'tenant_id', 'domain_id'),
+    )
+    id = Column(String, primary_key=True)
+    tenant_id = Column(String, ForeignKey('tenants.id'), nullable=False, index=True)
+    domain_id = Column(String, ForeignKey('domains.id'), nullable=False, index=True)
+    display_name = Column(String, nullable=False)
+    source_kind = Column(String, nullable=False)
+    authority_level = Column(String, nullable=False)
+    source_owner = Column(String, nullable=False)
+    expected_refresh_hours = Column(Integer, nullable=True)
+    source_reference = Column(String, nullable=True)
+    connector_kind = Column(String, nullable=False, default="NONE")
+    credential_reference = Column(String, nullable=True)
+    endpoint_reference = Column(String, nullable=True)
+    allowed_object = Column(String, nullable=True)
+    connector_status = Column(String, nullable=False, default="NOT_CONFIGURED")
+    connector_last_checked_at = Column(DateTime(timezone=True), nullable=True)
+    author_id = Column(String, nullable=False)
+    status = Column(String, nullable=False, default='PENDING')
     reviewed_by = Column(String, nullable=True)
     reviewed_at = Column(DateTime(timezone=True), nullable=True)
     review_note = Column(Text, nullable=True)
@@ -485,6 +568,30 @@ class DBRelease(Base):
     effective_from = Column(Date, nullable=True)
     effective_until = Column(Date, nullable=True)
     applicability = Column(JSONType, nullable=True)
+    workflows = Column(JSONType, nullable=True)
+    source_manifest_hash = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class DBWorkflowOutbox(Base):
+    """A signed-release workflow intent held until an approved dispatcher exists."""
+
+    __tablename__ = 'workflow_outbox'
+    __table_args__ = (
+        UniqueConstraint('tenant_id', 'idempotency_key', name='uq_workflow_outbox_idempotency'),
+        CheckConstraint("status IN ('HELD', 'SHADOW_READY', 'CANCELLED')", name='ck_workflow_outbox_status'),
+    )
+
+    id = Column(String, primary_key=True)
+    tenant_id = Column(String, ForeignKey('tenants.id'), nullable=False, index=True)
+    domain_id = Column(String, ForeignKey('domains.id'), nullable=False, index=True)
+    release_id = Column(String, ForeignKey('releases.id'), nullable=False, index=True)
+    reasoning_graph_id = Column(String, ForeignKey('reasoning_graphs.id'), nullable=False, index=True)
+    workflow_id = Column(String, nullable=False)
+    action_type = Column(String, nullable=False)
+    action_payload = Column(JSONType, nullable=False)
+    idempotency_key = Column(String, nullable=False)
+    status = Column(String, nullable=False, default='HELD', index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -571,16 +678,45 @@ class DBRuleGraph(Base):
 
 class DBEvidence(Base):
     __tablename__ = 'evidence'
+    __table_args__ = (
+        UniqueConstraint(
+            'tenant_id', 'domain_id', 'source_mapping_id', 'source_record_fingerprint',
+            name='uq_evidence_source_record_fingerprint',
+        ),
+    )
     id = Column(String, primary_key=True)
     tenant_id = Column(String, nullable=False, index=True)
     domain_id = Column(String, nullable=False, index=True)
     subject_id = Column(String, nullable=False)
     source_type = Column(String, nullable=False)
+    source_authority = Column(String, nullable=False, default="subject_submitted")
+    record_state = Column(String, nullable=False, default="provisional")
+    source_system = Column(String, nullable=True)
+    source_record_version = Column(String, nullable=True)
+    source_as_of = Column(DateTime(timezone=True), nullable=True)
+    source_mapping_id = Column(String, nullable=True)
+    source_record_fingerprint = Column(String, nullable=True)
     cryptographic_hash = Column(String, nullable=False)
     # The actual blob might be stored in S3, with just the key here
     s3_key_reference = Column(String, nullable=True) 
     timestamp = Column(DateTime(timezone=True), server_default=func.now())
+    retention_expires_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    deleted_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    deletion_reason = Column(String, nullable=True)
 
+class DBEvidenceDeletionEvent(Base):
+    """Append-only record of evidence soft-deletion."""
+    __tablename__ = 'evidence_deletion_events'
+    __table_args__ = (
+        UniqueConstraint('evidence_id', name='uq_evidence_deletion_event_evidence'),
+    )
+    id = Column(String, primary_key=True)
+    evidence_id = Column(String, ForeignKey('evidence.id'), nullable=False, index=True)
+    tenant_id = Column(String, nullable=False, index=True)
+    domain_id = Column(String, nullable=False, index=True)
+    actor_id = Column(String, nullable=False)
+    reason = Column(String, nullable=False)
+    timestamp = Column(DateTime(timezone=True), server_default=func.now())
 
 class DBEvidenceFactProposal(Base):
     """A source-referenced fact awaiting independent acceptance or rejection."""
@@ -687,6 +823,27 @@ class DBFact(Base):
     supporting_claim_ids = Column(JSONType, nullable=False)
     rejected_claim_ids = Column(JSONType, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    retention_expires_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    deleted_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    deletion_reason = Column(String, nullable=True)
+    superseded_by_fact_id = Column(String, ForeignKey('facts.id'), nullable=True, index=True)
+    superseded_at = Column(DateTime(timezone=True), nullable=True)
+    superseding_reason = Column(String, nullable=True)
+
+class DBFactSupersessionEvent(Base):
+    """Append-only record of a fact being superseded."""
+    __tablename__ = 'fact_supersession_events'
+    __table_args__ = (
+        UniqueConstraint('old_fact_id', name='uq_fact_supersession_event_old_fact'),
+    )
+    id = Column(String, primary_key=True)
+    old_fact_id = Column(String, ForeignKey('facts.id'), nullable=False, index=True)
+    new_fact_id = Column(String, ForeignKey('facts.id'), nullable=False, index=True)
+    tenant_id = Column(String, nullable=False, index=True)
+    domain_id = Column(String, nullable=False, index=True)
+    actor_id = Column(String, nullable=False)
+    reason = Column(String, nullable=False)
+    timestamp = Column(DateTime(timezone=True), server_default=func.now())
 
 class DBSupportRequest(Base):
     """A request for human assistance that never becomes evaluation evidence."""
@@ -699,6 +856,9 @@ class DBSupportRequest(Base):
     message = Column(Text, nullable=False)
     status = Column(String, nullable=False, default="OPEN")
     response_due_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    responsible_group = Column(String, nullable=True)
+    fallback_group = Column(String, nullable=True)
+    escalation_due_at = Column(DateTime(timezone=True), nullable=True, index=True)
     closed_at = Column(DateTime(timezone=True), nullable=True)
     retention_expires_at = Column(DateTime(timezone=True), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -736,6 +896,9 @@ class DBDecisionReviewCase(Base):
     resolution = Column(String, nullable=True)
     response_message = Column(Text, nullable=True)
     response_due_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    responsible_group = Column(String, nullable=True)
+    fallback_group = Column(String, nullable=True)
+    escalation_due_at = Column(DateTime(timezone=True), nullable=True, index=True)
     resolved_at = Column(DateTime(timezone=True), nullable=True)
     resolved_by = Column(String, nullable=True)
     closed_at = Column(DateTime(timezone=True), nullable=True)
@@ -779,8 +942,20 @@ class DBReasoningGraph(Base):
     
     # We store the graph as a JSONB blob in Postgres to avoid thousands of row inserts per evaluation
     graph_data = Column(JSONType, nullable=False)
-    
-    # Flattened summary fields for fast indexing/querying
+    retention_expires_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    deleted_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    deletion_reason = Column(String, nullable=True)
     overall_decision = Column(String, nullable=False)
     overall_confidence = Column(Float, nullable=False)
     evaluated_at = Column(DateTime(timezone=True), server_default=func.now())
+
+class DBReasoningGraphDeletionEvent(Base):
+    """Append-only record of a reasoning graph soft-deletion."""
+    __tablename__ = 'reasoning_graph_deletion_events'
+    id = Column(String, primary_key=True)
+    reasoning_graph_id = Column(String, ForeignKey('reasoning_graphs.id'), nullable=False, index=True)
+    tenant_id = Column(String, nullable=False, index=True)
+    domain_id = Column(String, nullable=False, index=True)
+    actor_id = Column(String, nullable=False)
+    reason = Column(String, nullable=False)
+    timestamp = Column(DateTime(timezone=True), server_default=func.now())

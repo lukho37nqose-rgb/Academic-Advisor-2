@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -11,8 +12,10 @@ from fastapi.testclient import TestClient
 from app.api import app
 from app.infrastructure.database import get_db_session
 from app.infrastructure.db import Base, DBBackgroundJob, DBDomain, DBTenant
+from app.infrastructure import repositories
 from app.infrastructure.repositories import BackgroundJobRepository
 from app.services import background_worker
+from app.services import background_job_signals
 from app.services.auth import Role, UserIdentity, get_current_user
 
 
@@ -62,6 +65,67 @@ def test_background_job_deduplicates_identifier_only_work(tmp_path) -> None:
     assert job.resource_id == "handbook_123"
     assert not hasattr(job, "payload")
     assert "student" not in job.deduplication_key.lower()
+
+
+def test_background_job_signal_payload_is_identifier_only() -> None:
+    body = background_job_signals._signal_body(
+        {
+            "job_id": "job_123",
+            "tenant_id": "tenant_jobs",
+            "domain_id": "dom_jobs",
+            "job_type": "HANDBOOK_TEXT_EXTRACTION",
+            "resource_id": "handbook_123",
+            "source_text": "must not leave the database boundary",
+        }
+    )
+    payload = json.loads(body)
+
+    assert payload == {
+        "domain_id": "dom_jobs",
+        "job_id": "job_123",
+        "job_type": "HANDBOOK_TEXT_EXTRACTION",
+        "resource_id": "handbook_123",
+        "tenant_id": "tenant_jobs",
+    }
+    assert "source_text" not in payload
+    assert "subject_id" not in payload
+
+
+def test_background_job_enqueue_publishes_optional_wakeup_signal(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'background_signal.db'}")
+    session_factory = async_sessionmaker(bind=engine, expire_on_commit=False)
+    asyncio.run(_create_schema(engine))
+    asyncio.run(_seed_tenant(session_factory))
+    signalled: list[dict[str, object]] = []
+
+    async def publish(summary: dict[str, object]) -> bool:
+        signalled.append(summary)
+        return True
+
+    monkeypatch.setattr(repositories, "publish_background_job_signal", publish)
+
+    async def exercise() -> dict[str, object]:
+        async with session_factory() as session:
+            return await BackgroundJobRepository(session).enqueue(
+                tenant_id="tenant_jobs",
+                domain_id="dom_jobs",
+                job_type="HANDBOOK_TEXT_EXTRACTION",
+                resource_id="handbook_signalled",
+            )
+
+    try:
+        queued = asyncio.run(exercise())
+    finally:
+        asyncio.run(engine.dispose())
+
+    assert signalled == [queued]
+    assert signalled[0]["tenant_id"] == "tenant_jobs"
+    assert signalled[0]["resource_id"] == "handbook_signalled"
+    assert "source_text" not in signalled[0]
+    assert "subject_id" not in signalled[0]
 
 
 def test_background_job_retries_then_retains_dead_letter(tmp_path) -> None:

@@ -16,6 +16,7 @@ from app.infrastructure.database import get_db_session
 from app.infrastructure.db import Base, DBDomain, DBTenant
 from app.infrastructure.repositories import ReleaseRepository
 from app.services.auth import Role, UserIdentity, get_current_user
+from app.services.policy_source_manifest import build_policy_source_manifest
 
 
 TENANT_ID = "tenant_calibration"
@@ -59,6 +60,7 @@ async def _seed_signed_release(session_factory) -> None:
     }
     rule_graph = compile_release_to_graph(RELEASE_ID, policy)
     effective_from = date(2026, 1, 1)
+    source_manifest, source_manifest_hash = build_policy_source_manifest(policy)
     signed_payload = {
         "policy": policy,
         "release": {
@@ -69,7 +71,9 @@ async def _seed_signed_release(session_factory) -> None:
             "effective_from": effective_from.isoformat(),
             "effective_until": None,
             "applicability": {},
+            "source_manifest_hash": source_manifest_hash,
         },
+        "source_manifest": source_manifest,
     }
     crypto = CryptoService()
     signature, payload_hash = crypto.sign_payload(signed_payload)
@@ -103,6 +107,7 @@ async def _seed_signed_release(session_factory) -> None:
                 signing_key_id=crypto.key_id,
                 signing_public_key=crypto.public_key_pem,
                 effective_from=effective_from,
+                source_manifest_hash=source_manifest_hash,
             ),
             rule_graph,
             policy["root"],
@@ -138,7 +143,7 @@ def test_shadow_calibration_requires_independent_certification_and_preserves_mis
     asyncio.run(_create_schema(engine))
     asyncio.run(_seed_signed_release(session_factory))
 
-    current_user = _identity(Role.RULE_AUTHOR, "author_1")
+    current_user = _identity(Role.POLICY_EDITOR, "author_1")
 
     async def _test_db_session():
         async with session_factory() as session:
@@ -169,12 +174,12 @@ def test_shadow_calibration_requires_independent_certification_and_preserves_mis
             json={"domain_id": DOMAIN_ID, "note": "The author should not be allowed to certify this suite."},
         )
 
-        current_user = _identity(Role.POLICY_OWNER, "owner_1")
+        current_user = _identity(Role.APPROVER, "owner_1")
         certified = client.post(
             f"/api/v1/governance/shadow-calibrations/{suite_id}/certify",
             json={"domain_id": DOMAIN_ID, "note": "Verified recorded outcome references and representative case inputs."},
         )
-        current_user = _identity(Role.RULE_AUTHOR, "author_1")
+        current_user = _identity(Role.POLICY_EDITOR, "author_1")
         completed = client.post(
             f"/api/v1/governance/shadow-calibrations/{suite_id}/run",
             json={"domain_id": DOMAIN_ID},
@@ -185,12 +190,12 @@ def test_shadow_calibration_requires_independent_certification_and_preserves_mis
             json=_suite_payload("INELIGIBLE", "case_mismatch_01"),
         )
         mismatch_suite_id = mismatch_submission.json()["suite_id"]
-        current_user = _identity(Role.POLICY_OWNER, "owner_1")
+        current_user = _identity(Role.APPROVER, "owner_1")
         mismatch_certified = client.post(
             f"/api/v1/governance/shadow-calibrations/{mismatch_suite_id}/certify",
             json={"domain_id": DOMAIN_ID, "note": "Verified the differing recorded outcome for this representative case."},
         )
-        current_user = _identity(Role.RULE_AUTHOR, "author_1")
+        current_user = _identity(Role.POLICY_EDITOR, "author_1")
         mismatch_run = client.post(
             f"/api/v1/governance/shadow-calibrations/{mismatch_suite_id}/run",
             json={"domain_id": DOMAIN_ID},
@@ -209,7 +214,7 @@ def test_shadow_calibration_requires_independent_certification_and_preserves_mis
                 "note": "The author should not classify a mismatch in their own calibration suite.",
             },
         )
-        current_user = _identity(Role.POLICY_OWNER, "owner_1")
+        current_user = _identity(Role.APPROVER, "owner_1")
         resolved = client.patch(
             f"/api/v1/governance/shadow-calibration-findings/{finding_id}",
             json={

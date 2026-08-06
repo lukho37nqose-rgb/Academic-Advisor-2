@@ -23,6 +23,12 @@ const subjectSession: SessionCapabilities = {
 };
 
 async function mockSessionCapabilities(page: Page, session: SessionCapabilities) {
+    await page.addInitScript(() => {
+        sessionStorage.setItem(
+            'oidc.user:https://your-tenant.auth0.com:your-client-id',
+            JSON.stringify({ access_token: 'test-access-token', expires_at: Math.floor(Date.now() / 1000) + 3600, profile: { sub: 'test-user' } }),
+        );
+    });
     await page.route('**/api/v1/session/capabilities', async route => {
         await route.fulfill({ json: session });
     });
@@ -80,6 +86,7 @@ const mockGraphIncomplete = {
 test.describe('Workspace access boundaries', () => {
     test('shows a tenant administrator only approved operational pages', async ({ page }) => {
         await openApplication(page);
+        await expect(page.getByRole('heading', { name: 'Your work' })).toBeVisible();
         await expect(page.getByRole('button', { name: 'Governance Desk' })).toBeVisible();
         await expect(page.getByRole('button', { name: 'System Records' })).toBeVisible();
         await expect(page.getByRole('button', { name: 'Shadow Calibration' })).toBeVisible();
@@ -98,7 +105,7 @@ test.describe('Workspace access boundaries', () => {
 
     test('shows a metadata steward only the governance workspace', async ({ page }) => {
         await openApplication(page, {
-            experience: 'staff', role: 'metadata_steward', role_label: 'Metadata steward', allowed_views: ['governance'],
+            experience: 'staff', role: 'staff_member', role_label: 'Metadata steward', allowed_views: ['governance'],
         });
         await expect(page.getByRole('button', { name: 'Governance Desk' })).toBeVisible();
         await expect(page.getByRole('button', { name: 'System Records' })).toHaveCount(0);
@@ -109,6 +116,9 @@ test.describe('Workspace access boundaries', () => {
     async function mockCalibrationWorkspace(page: Page) {
         await page.route('**/api/v1/admin/domains', async route => {
             await route.fulfill({ json: { items: [{ domain_id: 'dom_calibration', domain_name: 'Progression' }] } });
+        });
+        await page.route('**/api/v1/admin/institutional-data-sources**', async route => {
+            await route.fulfill({ json: { items: [{ source_id: 'source_1', domain_id: 'dom_import', display_name: 'Example records', source_kind: 'SYSTEM_OF_RECORD', authority_level: 'AUTHORITATIVE', source_owner: 'Registry', status: 'APPROVED', author_id: 'owner_1' }] } });
         });
         await page.route('**/api/v1/governance/domains/dom_calibration/calibration-releases', async route => {
             await route.fulfill({ json: { items: [] } });
@@ -124,8 +134,9 @@ test.describe('Workspace access boundaries', () => {
             await route.fulfill({ json: { items: [] } });
         });
         await openApplication(page, {
-            experience: 'staff', role: 'rule_author', role_label: 'Policy author', allowed_views: ['shadow_calibration'],
+            experience: 'staff', role: 'policy_editor', role_label: 'Policy author', allowed_views: ['shadow_calibration'],
         });
+        await page.getByRole('button', { name: 'Shadow Calibration' }).click();
         await expect(page.getByRole('button', { name: 'New suite' })).toBeVisible();
     });
 
@@ -145,11 +156,12 @@ test.describe('Workspace access boundaries', () => {
             await route.fulfill({ json: { items: [] } });
         });
         await openApplication(page, {
-            experience: 'staff', role: 'institutional_records_steward', role_label: 'Institutional records steward', allowed_views: ['institutional_timeline', 'evidence_facts'],
+            experience: 'staff', role: 'staff_member', role_label: 'Institutional records steward', allowed_views: ['institutional_timeline', 'evidence_facts'],
         });
         await expect(page.getByRole('button', { name: 'Institutional Timeline' })).toBeVisible();
         await expect(page.getByRole('button', { name: 'Evidence Facts' })).toBeVisible();
         await expect(page.getByRole('button', { name: 'Governance Desk' })).toHaveCount(0);
+        await page.getByRole('button', { name: 'Institutional Timeline' }).click();
         await expect(page.getByRole('button', { name: 'Record existing decision' })).toBeVisible();
     });
 
@@ -172,8 +184,9 @@ test.describe('Workspace access boundaries', () => {
             await route.fulfill({ json: { proposal_id: 'efp_1', ...submitted, subject_id: 'student_1', proposal_origin: 'MANUAL', evidence_sha256: 'a'.repeat(64), input_sha256: 'b'.repeat(64), status: 'PENDING', proposed_by: 'records_1' } });
         });
         await openApplication(page, {
-            experience: 'staff', role: 'institutional_records_steward', role_label: 'Institutional records steward', allowed_views: ['evidence_facts'],
+            experience: 'staff', role: 'staff_member', role_label: 'Institutional records steward', allowed_views: ['evidence_facts'],
         });
+        await page.getByRole('button', { name: 'Evidence Facts' }).click();
         await page.getByLabel('Subject institutional identifier').fill('student_1');
         await page.getByRole('button', { name: 'Load sources' }).click();
         await page.getByRole('button', { name: /document upload/i }).click();
@@ -185,6 +198,20 @@ test.describe('Workspace access boundaries', () => {
     });
 
     test('shows a subject certified institutional context without staff-only references', async ({ page }) => {
+        await page.route('**/api/v1/subject/current-positions', async route => {
+            await route.fulfill({ json: { items: [{
+                trace_id: 'trace_curriculum', domain_id: 'dom_subject', domain_name: 'Academic progression',
+                position_type: 'curriculum', position_label: 'Politics progression', decision: 'ELIGIBLE',
+                release_version: '2026.1', evaluated_at: '2026-07-25T08:30:00Z', source_authority: 'official_system', record_state: 'confirmed', source_system: 'PeopleSoft', source_as_of: '2026-07-24T00:00:00Z',
+            }, {
+                trace_id: 'trace_dp', domain_id: 'dom_assessment', domain_name: 'Assessment eligibility',
+                position_type: 'assessment_eligibility', position_label: 'DP eligibility', decision: 'NEEDS_MANUAL_REVIEW',
+                release_version: '2026.1', evaluated_at: '2026-07-25T08:30:00Z', source_authority: 'institutional_working_record', record_state: 'provisional', source_system: 'Course system', source_as_of: '2026-07-25T00:00:00Z',
+                source_expected_by: '2026-07-26T00:00:00Z', source_is_stale: false,
+                responsible_group: 'Politics Department', fallback_group: 'Humanities Undergraduate Office',
+                provisional_escalation_by: '2026-07-28T00:00:00Z',
+            }] } });
+        });
         await page.route('**/api/v1/institutional-timeline', async route => {
             await route.fulfill({
                 json: {
@@ -205,10 +232,33 @@ test.describe('Workspace access boundaries', () => {
         await mockSessionCapabilities(page, subjectSession);
         await page.goto('/', { waitUntil: 'domcontentloaded' });
         await expect(page.getByRole('heading', { name: 'Your institutional timeline' })).toBeVisible();
+        await expect(page.getByRole('heading', { name: 'Your current positions' })).toBeVisible();
+        await expect(page.getByRole('heading', { name: 'Politics progression' })).toBeVisible();
+        await expect(page.getByRole('heading', { name: 'DP eligibility' })).toBeVisible();
+        await expect(page.getByText(/Current and provisional, based on Course system as of/)).toBeVisible();
+        await expect(page.getByText(/Expected source refresh:/)).toBeVisible();
+        await expect(page.getByText(/Politics Department is responsible/)).toBeVisible();
+        await expect(page.getByRole('link', { name: 'See why this applies' }).first()).toHaveAttribute('href', '?experience=subject&trace=trace_curriculum');
         await expect(page.getByRole('heading', { name: 'Progression concession approved' })).toBeVisible();
         await expect(page.getByText('Faculty academic committee')).toBeVisible();
         await expect(page.getByText('Programme Progression Policy, section 4')).toBeVisible();
         await expect(page.getByText('Institutional decision record 2026-14')).toHaveCount(0);
+    });
+
+    test('explains when a student position cannot be loaded', async ({ page }) => {
+        await page.route('**/api/v1/subject/current-positions', async route => {
+            await route.fulfill({ status: 503, json: {} });
+        });
+        await page.route('**/api/v1/institutional-timeline', async route => {
+            await route.fulfill({ json: { items: [] } });
+        });
+        await page.route('**/api/v1/public/policy-guides', async route => {
+            await route.fulfill({ json: { items: [] } });
+        });
+        await mockSessionCapabilities(page, subjectSession);
+        await page.goto('/', { waitUntil: 'domcontentloaded' });
+        await expect(page.getByRole('alert')).toContainText('institutional service could not complete that request');
+        await expect(page.getByText('Network Error')).toHaveCount(0);
     });
 
     test('renders a personal view of how the common policy applies to an eligible trace', async ({ page }) => {
@@ -218,14 +268,11 @@ test.describe('Workspace access boundaries', () => {
         await mockSessionCapabilities(page, subjectSession);
         await page.goto('/?experience=subject&trace=trace_1', { waitUntil: 'domcontentloaded' });
 
-        await expect(page.getByRole('heading', { name: 'How the published policy applies to your record' })).toBeVisible();
-        await expect(page.getByRole('heading', { name: 'The evaluated policy conditions are satisfied' })).toBeVisible();
-        await expect(page.getByRole('heading', { name: 'Why this is your current position' })).toBeVisible();
-        await expect(page.getByText('academic.gpa')).toBeVisible();
-        await expect(page.getByText('3.5')).toBeVisible();
-        await expect(page.getByText('Check GPA')).toBeVisible();
-        await expect(page.getByText('Published condition: is at least 3')).toBeVisible();
-        await expect(page.getByText('Policy source: Academic Progress Policy 2026, section 3.1')).toBeVisible();
+        await expect(page.getByRole('heading', { name: 'Your current position' })).toBeVisible();
+        await expect(page.getByRole('heading', { name: 'You meet the requirements to continue.' })).toBeVisible();
+        await expect(page.getByRole('heading', { name: 'Policy conditions considered' })).toBeVisible();
+        await expect(page.getByLabel('Policy conditions considered').getByText('Check GPA', { exact: true })).toBeVisible();
+        await expect(page.getByLabel('Policy conditions considered').getByText('Policy source: Academic Progress Policy 2026, section 3.1')).toBeVisible();
         await expect(page.getByText('Confidence Score: 100.0%')).toHaveCount(0);
     });
 
@@ -236,10 +283,8 @@ test.describe('Workspace access boundaries', () => {
         await mockSessionCapabilities(page, subjectSession);
         await page.goto('/?experience=subject&trace=trace_2', { waitUntil: 'domcontentloaded' });
 
-        await expect(page.getByRole('heading', { name: 'Human consideration is required' })).toBeVisible();
-        await expect(page.getByText('This is not, by itself, a final institutional decision or an adverse outcome.')).toBeVisible();
-        await expect(page.locator('[data-position-state="human_review"]')).toBeVisible();
-        await expect(page.getByText('needs_human_review')).toBeVisible();
+        await expect(page.getByRole('heading', { name: 'Your situation needs human consideration.' })).toBeVisible();
+        await expect(page.getByText('This is not a final decision.')).toBeVisible();
         await expect(page.getByText('Needs Manual Review')).toHaveCount(0);
     });
 
@@ -250,9 +295,8 @@ test.describe('Workspace access boundaries', () => {
         await mockSessionCapabilities(page, subjectSession);
         await page.goto('/?experience=subject&trace=trace_incomplete', { waitUntil: 'domcontentloaded' });
 
-        await expect(page.getByRole('heading', { name: 'Your policy position needs institutional review' })).toBeVisible();
-        await expect(page.getByText('This is not a final institutional decision. An authorised institutional reviewer needs to confirm the next step.')).toBeVisible();
-        await expect(page.locator('[data-position-state="indeterminate"]')).toBeVisible();
+        await expect(page.getByRole('heading', { name: 'Your position is currently unclear.' })).toBeVisible();
+        await expect(page.getByText('We cannot determine your position automatically based on the available information.')).toBeVisible();
         await expect(page.getByText('One or more evaluated conditions are not yet satisfied')).toHaveCount(0);
     });
 });
@@ -325,7 +369,7 @@ test.describe('Governance Desk', () => {
         await page.route('**/api/v1/admin/permissions*', async route => {
             await route.fulfill({
                 json: {
-                    current_role: 'metadata_steward',
+                    current_role: 'staff_member',
                     domain_id: 'dom_curr_2026',
                     metadata_quick_edits: [
                         {
@@ -346,7 +390,7 @@ test.describe('Governance Desk', () => {
                     formal_governance_changes: ['Graduation requirements'],
                     matrix: [
                         {
-                            role: 'metadata_steward',
+                            role: 'staff_member',
                             label: 'Metadata steward',
                             can_quick_edit: true,
                             can_author_structured_drafts: false,
@@ -395,6 +439,9 @@ test.describe('Institutional Input And Public Access', () => {
         await page.route('**/api/v1/admin/domains', async route => {
             await route.fulfill({ json: { items: [{ domain_id: 'dom_import', domain_name: 'Student Support Eligibility' }] } });
         });
+        await page.route('**/api/v1/admin/institutional-data-sources**', async route => {
+            await route.fulfill({ json: { items: [{ source_id: 'source_1', domain_id: 'dom_import', display_name: 'Example records', source_kind: 'SYSTEM_OF_RECORD', authority_level: 'AUTHORITATIVE', source_owner: 'Registry', status: 'APPROVED', author_id: 'owner_1' }] } });
+        });
         await page.route('**/api/v1/admin/system-record-import-mappings**', async route => {
             if (route.request().method() === 'GET') {
                 await route.fulfill({ json: { items: [], can_submit: true, can_review: false } });
@@ -403,8 +450,8 @@ test.describe('Institutional Input And Public Access', () => {
             expect(route.request().postDataJSON()).toEqual({
                 domain_id: 'dom_import',
                 contract: {
-                    mapping_id: 'income-v1', source_system: 'Example records', subject_identifier_column: 'record_id',
-                    source_record_version_column: 'version',
+                    mapping_id: 'income-v1', source_id: 'source_1', source_system: 'Example records', subject_identifier_column: 'record_id',
+                    source_record_version_column: 'version', record_state: 'confirmed',
                     fields: [{ source_column: 'income', target_path: 'facts.household_income', value_type: 'number', required: true }],
                 },
             });
@@ -412,7 +459,7 @@ test.describe('Institutional Input And Public Access', () => {
                 status: 201,
                 json: {
                     mapping_id: 'mapping_income_1', domain_id: 'dom_import', mapping_name: 'income-v1', source_system: 'Example records',
-                    contract: { mapping_id: 'income-v1', source_system: 'Example records', subject_identifier_column: 'record_id', source_record_version_column: 'version', fields: [{ source_column: 'income', target_path: 'facts.household_income', value_type: 'number', required: true }] },
+                    contract: { mapping_id: 'income-v1', source_id: 'source_1', source_system: 'Example records', subject_identifier_column: 'record_id', source_record_version_column: 'version', record_state: 'confirmed', fields: [{ source_column: 'income', target_path: 'facts.household_income', value_type: 'number', required: true }] },
                     contract_sha256: 'a'.repeat(64), status: 'PENDING', author_id: 'author_1',
                 },
             });
@@ -436,7 +483,7 @@ test.describe('Institutional Input And Public Access', () => {
             name: 'records.csv', mimeType: 'text/csv', buffer: Buffer.from('record_id,version,income\nsubject_1,1,120000\n'),
         });
         await page.getByLabel('Mapping name').fill('income-v1');
-        await page.getByLabel('Source system').fill('Example records');
+        await page.getByLabel('Approved institutional data source').selectOption('source_1');
         await page.getByLabel('Subject identifier column').fill('record_id');
         await page.getByLabel('Source record version column').fill('version');
         await page.getByLabel('Export column name').fill('income');
@@ -458,6 +505,9 @@ test.describe('Institutional Input And Public Access', () => {
         };
         await page.route('**/api/v1/admin/domains', async route => {
             await route.fulfill({ json: { items: [{ domain_id: 'dom_import', domain_name: 'Student Support Eligibility' }] } });
+        });
+        await page.route('**/api/v1/admin/institutional-data-sources**', async route => {
+            await route.fulfill({ json: { items: [{ source_id: 'source_registrar', domain_id: 'dom_import', display_name: 'Registrar export', source_kind: 'SYSTEM_OF_RECORD', authority_level: 'AUTHORITATIVE', source_owner: 'Registrar', status: 'APPROVED', author_id: 'owner_1' }] } });
         });
         await page.route('**/api/v1/admin/system-record-import-mappings**', async route => {
             if (route.request().method() === 'GET') {
@@ -483,6 +533,10 @@ test.describe('Institutional Input And Public Access', () => {
             const payload = route.request().postDataJSON();
             expect(payload.facts[0].label).toBe('Annual household income');
             expect(payload.rules[0].operator).toBe('at_most');
+            expect(payload.governed_person_label).toBe('applicant');
+            expect(payload.position_collection_label).toBe('eligibility positions');
+            expect(payload.subject_position_type).toBe('eligibility');
+            expect(payload.subject_position_label).toBe('Eligibility');
             expect(payload.decision_review_enabled).toBe(true);
             expect(payload.decision_review_response_target_hours).toBe(120);
             await route.fulfill({
@@ -503,11 +557,13 @@ test.describe('Institutional Input And Public Access', () => {
 
         await openApplication(page);
         await page.getByRole('button', { name: 'Institution Setup' }).click();
+        await page.getByLabel('Starter profile').selectOption('general_eligibility');
         await page.getByLabel('Institution name').fill('Example Institution');
         await page.getByLabel('Decision domain').fill('Student Support Eligibility');
         await page.getByLabel('Privacy notice URL').fill('https://example.test/privacy');
         await page.getByLabel('Assisted or offline contact route').focus();
         await page.keyboard.insertText('Call the Student Support desk on weekdays.');
+        await page.getByLabel('Responsible office or group').fill('Student Support Office');
         await page.getByRole('checkbox', { name: 'Enable decision review cases' }).check();
         await page.getByRole('button', { name: 'Continue' }).click();
 
@@ -541,6 +597,8 @@ test.describe('Institutional Input And Public Access', () => {
                     domain_id: 'dom_public',
                     domain_name: 'Student Support Eligibility',
                     version: '2026.1',
+                    governed_person_label: 'student',
+                    position_collection_label: 'support positions',
                     assistance_requests_enabled: true,
                     support_response_target_hours: 48,
                     support_privacy_notice_url: 'https://example.test/privacy',
@@ -563,7 +621,7 @@ test.describe('Institutional Input And Public Access', () => {
         await mockSessionCapabilities(page, subjectSession);
         await page.goto('/', { waitUntil: 'domcontentloaded' });
         await page.getByRole('button', { name: /Student Support Eligibility/ }).click();
-        await expect(page.getByText('This guide explains the approved policy. It does not decide an individual case.')).toBeVisible();
+        await expect(page.getByText('This guide explains the approved policy. It does not decide a case for an individual student.')).toBeVisible();
         await expect(page.getByText('Support Policy 2026, section 2.1')).toBeVisible();
         await expect(page.getByText('Response target: within 48 hours.')).toBeVisible();
         await expect(page.getByText('Call the Student Support desk on weekdays.')).toBeVisible();

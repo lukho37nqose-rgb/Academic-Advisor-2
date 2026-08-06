@@ -24,6 +24,18 @@
             }
         }
     },
+    "resources": {
+        "course": [
+            {
+                "id": "ECO1010F",
+                "label": "Economics 1010F"
+            },
+            {
+                "id": "POL1005S",
+                "label": "Politics 1005S"
+            }
+        ]
+    },
     "governance": {
         "metadata_quick_edits": [
             {

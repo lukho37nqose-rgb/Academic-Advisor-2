@@ -1,0 +1,111 @@
+{
+  "format_version": "1.0",
+  "mode": "LOCAL_REHEARSAL",
+  "institution_name": "University of Cape Town",
+  "faculty_or_unit": "Faculty of Humanities",
+  "decision_name": "REPLACE_WITH_ONE_BOUNDED_DECISION",
+  "decision_statement": "Replace this with the single question the rehearsal will test, including which outcome remains human and non-operative.",
+  "out_of_scope": [
+    "No operative academic decision",
+    "No publication or claim of UCT approval",
+    "No external OCR or AI processing",
+    "No PeopleSoft connection or write-back"
+  ],
+  "sources": [
+    {
+      "reference": "REPLACE_WITH_HANDBOOK_TITLE_AND_YEAR",
+      "kind": "POLICY_HANDBOOK",
+      "authoritative": false,
+      "effective_period_confirmed": false,
+      "version_confirmed": false
+    },
+    {
+      "reference": "consented-personal-transcript-local-copy",
+      "kind": "TRANSCRIPT",
+      "authoritative": false,
+      "effective_period_confirmed": true,
+      "version_confirmed": true
+    }
+  ],
+  "data_boundaries": [
+    {
+      "reference": "public-or-personally-held-policy-source",
+      "basis": "PUBLIC_POLICY",
+      "contains_direct_identifiers": false,
+      "storage_boundary": "LOCAL_ONLY"
+    },
+    {
+      "reference": "subject-owned-transcript-consent",
+      "basis": "CONSENTED_SUBJECT_OWNED",
+      "contains_direct_identifiers": true,
+      "storage_boundary": "LOCAL_ONLY",
+      "approval_reference": "REPLACE_WITH_PERSONAL_CONSENT_REFERENCE"
+    }
+  ],
+  "gates": [
+    { "id": "bounded_decision", "accepted": false, "note": "Name one decision only." },
+    { "id": "non_operative_use", "accepted": true, "note": "This rehearsal cannot change an institutional outcome." },
+    { "id": "policy_versioning", "accepted": false, "note": "Confirm handbook edition and effective period." },
+    { "id": "source_provenance", "accepted": false, "note": "Confirm source location and status." },
+    { "id": "transcript_minimisation", "accepted": false, "note": "Use only facts required for the bounded test." },
+    { "id": "human_review_route", "accepted": false, "note": "Document how uncertainty and exceptions will be handled." },
+    { "id": "expected_cases", "accepted": false, "note": "Prepare expected outcomes, including an ambiguous case." },
+    { "id": "no_repository_storage", "accepted": true, "note": "Real source files and reports remain ignored by Git." }
+  ],
+  "owners": [
+    { "role": "policy_owner", "name_or_office": null, "confirmed": false, "note": "Local rehearsal has no institutional policy owner." },
+    { "role": "release_approver", "name_or_office": null, "confirmed": false, "note": "Local rehearsal has no institutional approver." }
+  ],
+  "identity_plan": {
+    "status": "NOT_REQUESTED",
+    "issuer": null,
+    "audience": null,
+    "jwks_url": null,
+    "tenant_claim": null,
+    "role_claim": null,
+    "domain_claim": null,
+    "subject_id_claim": null,
+    "test_identities_count": 0
+  },
+  "deployment_plan": {
+    "hosting_boundary": "LOCAL_ONLY",
+    "aws_account_status": "NOT_APPLICABLE",
+    "terraform_state_status": "NOT_APPLICABLE",
+    "database_boundary": "LOCAL_SQLITE",
+    "object_storage_boundary": "LOCAL_ONLY",
+    "dns_tls_status": "NOT_APPLICABLE",
+    "secrets_management_status": "NOT_APPLICABLE",
+    "note": "Local-only rehearsal; no tenant environment or UCT system access."
+  },
+  "operational_controls": [
+    { "id": "retention_schedule", "status": "NOT_APPLICABLE", "owner_reference": null, "approval_reference": null, "note": "Real source files stay outside the repository and are deleted manually after local rehearsal." },
+    { "id": "object_immutability", "status": "NOT_APPLICABLE", "owner_reference": null, "approval_reference": null, "note": "No tenant object store is used in local rehearsal." },
+    { "id": "backup_restore_test", "status": "NOT_APPLICABLE", "owner_reference": null, "approval_reference": null, "note": "No production backup claim is made for local rehearsal." },
+    { "id": "incident_contact", "status": "NOT_APPLICABLE", "owner_reference": null, "approval_reference": null, "note": "Local rehearsal stops if any privacy or security concern appears." },
+    { "id": "accessibility_route", "status": "NOT_APPLICABLE", "owner_reference": null, "approval_reference": null, "note": "Accessibility testing belongs to an institution-approved shadow pilot." },
+    { "id": "security_review", "status": "NOT_APPLICABLE", "owner_reference": null, "approval_reference": null, "note": "No hosted service is exposed in local rehearsal." },
+    { "id": "malware_scanning", "status": "NOT_APPLICABLE", "owner_reference": null, "approval_reference": null, "note": "Do not upload real documents to a shared environment during local rehearsal." },
+    { "id": "monitoring_owner", "status": "NOT_APPLICABLE", "owner_reference": null, "approval_reference": null, "note": "No persistent service is operated in local rehearsal." }
+  ],
+  "integrations": [
+    {
+      "system_name": "PeopleSoft",
+      "integration_type": "NONE",
+      "status": "NOT_REQUESTED",
+      "owner_reference": null,
+      "schema_or_export_reference": null,
+      "note": "Local rehearsal does not connect to PeopleSoft or request exports."
+    },
+    {
+      "system_name": "Amathuba",
+      "integration_type": "NONE",
+      "status": "NOT_REQUESTED",
+      "owner_reference": null,
+      "schema_or_export_reference": null,
+      "note": "Local rehearsal does not connect to Amathuba or request attendance/performance exports."
+    }
+  ],
+  "external_ocr_enabled": false,
+  "external_ai_enabled": false,
+  "external_processing_approval_reference": null
+}

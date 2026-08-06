@@ -17,11 +17,11 @@ automated policy exception service.
 
 ## Governed Lifecycle
 
-1. An institutional records steward records an already-authorised decision with
+1. A staff member records an already-authorised decision with
    an authority reference and source decision reference.
 2. The event is immutable from submission onward and is not visible to the
    subject yet.
-3. A different policy owner or tenant administrator certifies or rejects the
+3. A different approver or tenant administrator certifies or rejects the
    record. The person who recorded it cannot attest it.
 4. Certified subject-safe events appear in the subject timeline. Staff-only
    records remain unavailable to the subject.

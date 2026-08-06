@@ -71,7 +71,7 @@ def test_handbook_upload_is_queued_and_extracted_page_by_page(tmp_path, monkeypa
 
     app.dependency_overrides[get_current_user] = lambda: UserIdentity(
         tenant_id="tenant_handbook",
-        role=Role.RULE_AUTHOR,
+        role=Role.POLICY_EDITOR,
         user_id="author_1",
         domain_ids=["dom_handbook"],
     )
@@ -122,6 +122,8 @@ def test_handbook_upload_is_queued_and_extracted_page_by_page(tmp_path, monkeypa
         "page_number": 1,
         "text_content": "Handbook rule text",
         "content_hash": page.content_hash,
+        "extraction_kind": "SELECTABLE_TEXT",
+        "review_priority": "NORMAL",
     }]
     assert page_review.json()["next_page_after"] is None
     assert listing.status_code == 200
@@ -140,7 +142,7 @@ def test_handbook_without_selectable_text_requires_manual_review(tmp_path, monke
 
     app.dependency_overrides[get_current_user] = lambda: UserIdentity(
         tenant_id="tenant_handbook",
-        role=Role.RULE_AUTHOR,
+        role=Role.POLICY_EDITOR,
         user_id="author_1",
         domain_ids=["dom_handbook"],
     )
@@ -196,7 +198,7 @@ def test_direct_handbook_session_becomes_a_canonical_hashed_source(tmp_path, mon
     monkeypatch.setattr(BlobStorage, "get_object_metadata", classmethod(_object_metadata))
     app.dependency_overrides[get_current_user] = lambda: UserIdentity(
         tenant_id="tenant_handbook",
-        role=Role.RULE_AUTHOR,
+        role=Role.POLICY_EDITOR,
         user_id="author_1",
         domain_ids=["dom_handbook"],
     )
@@ -265,7 +267,7 @@ def test_scanned_handbook_ocr_requires_and_records_staff_review(tmp_path, monkey
 
     app.dependency_overrides[get_current_user] = lambda: UserIdentity(
         tenant_id="tenant_handbook",
-        role=Role.RULE_AUTHOR,
+        role=Role.POLICY_EDITOR,
         user_id="author_1",
         domain_ids=["dom_handbook"],
     )
@@ -313,6 +315,9 @@ def test_scanned_handbook_ocr_requires_and_records_staff_review(tmp_path, monkey
     assert proposals.status_code == 200
     assert proposals.json()["items"][0]["status"] == "PENDING_REVIEW"
     assert proposals.json()["items"][0]["proposed_text"] == "Verified OCR candidate text"
+    assert len(proposals.json()["items"][0]["source_page_hash"]) == 64
+    assert len(proposals.json()["items"][0]["provider_response_hash"]) == 64
+    assert proposals.json()["items"][0]["review_priority"] == "NORMAL"
     assert approved.status_code == 200
     assert approved.json()["status"] == "ACCEPTED"
     assert upload is not None and upload.status == "READY_FOR_REVIEW"

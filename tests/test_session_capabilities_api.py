@@ -15,7 +15,7 @@ def _identity(role: Role) -> UserIdentity:
 
 
 def test_session_capabilities_expose_only_workspace_routing_information():
-    app.dependency_overrides[get_current_user] = lambda: _identity(Role.RULE_AUTHOR)
+    app.dependency_overrides[get_current_user] = lambda: _identity(Role.POLICY_EDITOR)
     try:
         response = TestClient(app).get("/api/v1/session/capabilities")
     finally:
@@ -24,9 +24,9 @@ def test_session_capabilities_expose_only_workspace_routing_information():
     assert response.status_code == 200
     assert response.json() == {
         "experience": "staff",
-        "role": "rule_author",
-        "role_label": "Policy author",
-        "allowed_views": ["handbook_intake", "record_import", "policy_ambiguities", "shadow_calibration"],
+        "role": "policy_editor",
+        "role_label": "Policy editor",
+        "allowed_views": ["institution_setup", "handbook_intake", "record_import", "policy_ambiguities", "shadow_calibration"],
     }
 
 
@@ -47,7 +47,7 @@ def test_subject_session_has_no_staff_workspace_or_identity_values():
 
 
 def test_policy_author_cannot_read_governance_configuration_or_reasoning_traces():
-    app.dependency_overrides[get_current_user] = lambda: _identity(Role.RULE_AUTHOR)
+    app.dependency_overrides[get_current_user] = lambda: _identity(Role.POLICY_EDITOR)
     try:
         client = TestClient(app)
         permissions_response = client.get(

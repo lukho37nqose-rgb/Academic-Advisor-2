@@ -29,6 +29,13 @@ async def format_explanation(graph: ReasoningGraph) -> str:
     conclusion = next((node for node in graph.nodes.values() if node.type == "conclusion"), None)
     outcome = conclusion.data.get("overall_passed") if conclusion else None
 
+    if conclusion and conclusion.data.get("human_confirmation_required"):
+        return (
+            "The published conditions have been calculated, but this type of position "
+            "requires human confirmation before it is final. This is not a final "
+            "institutional decision or an adverse outcome."
+        )
+
     if outcome == "NEEDS_MANUAL_REVIEW":
         conditions = _describe_conditions(_evaluations_with_status(graph, "NEEDS_MANUAL_REVIEW"))
         detail = f" for: {conditions}" if conditions else " under the published process"

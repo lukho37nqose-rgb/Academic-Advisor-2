@@ -1,6 +1,6 @@
-# Shadow Calibration
+# Outcome Calibration
 
-Shadow calibration is a tenant-neutral, non-operative comparison between a
+Outcome calibration is a tenant-neutral, non-operative comparison between a
 signed policy release and a small set of representative recorded outcomes. It
 exists to test whether a policy model represents institutional practice before
 the system is considered for operational use.

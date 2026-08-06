@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="A synthetic walkthrough of an institutional reasoning explanation by Cacisa Systems." />
+    <meta name="theme-color" content="#405262" />
+    <title>Synthetic walkthrough | Cacisa Systems</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body class="demo-body">
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header compact-header">
+      <a class="brand" href="index.html" aria-label="Cacisa Systems home">
+        <img src="assets/cacisa-symbol.png" alt="" width="42" height="42" />
+        <span><strong>Cacisa</strong><small>Systems</small></span>
+      </a>
+      <a class="text-link" href="index.html">Back to Cacisa Systems <span aria-hidden="true">&rarr;</span></a>
+    </header>
+
+    <main id="main" class="demo-main">
+      <section class="demo-intro" aria-labelledby="demo-title">
+        <p class="eyebrow">Synthetic walkthrough</p>
+        <h1 id="demo-title">An explanation, not an automated institutional decision.</h1>
+        <p>This demonstration uses fictional information and a synthetic policy. It shows how an approved rule, accepted evidence, and a visible uncertainty can be presented together.</p>
+        <p class="demo-disclaimer"><strong>No data entered here is stored or sent anywhere.</strong> The controls below only change this page.</p>
+      </section>
+
+      <section class="demo-controls" aria-labelledby="scenario-title">
+        <div>
+          <p class="section-kicker">Choose a fictional scenario</p>
+          <h2 id="scenario-title">What should the explanation make clear?</h2>
+        </div>
+        <div class="scenario-buttons" role="group" aria-label="Synthetic scenarios">
+          <button class="scenario-button is-active" type="button" data-scenario="confirmed">Confirmed position</button>
+          <button class="scenario-button" type="button" data-scenario="provisional">Provisional position</button>
+          <button class="scenario-button" type="button" data-scenario="review">Review route</button>
+        </div>
+      </section>
+
+      <section class="decision-panel" aria-live="polite">
+        <div class="decision-summary">
+          <p class="decision-label">Current policy position</p>
+          <div id="decision-status" class="status status-confirmed"><span aria-hidden="true"></span><strong>You meet the published support requirements.</strong></div>
+          <p id="decision-copy">The accepted household-income record is within the threshold set by the active policy release.</p>
+          <p class="release-reference">Governing release: <strong>Synthetic Student Support Policy 2026.1</strong></p>
+        </div>
+        <div class="decision-details">
+          <article>
+            <p class="detail-label">Rule considered</p>
+            <h3 id="rule-title">Income is within the support threshold</h3>
+            <p id="rule-copy">Annual household income must be at or below R350,000.</p>
+            <p class="citation">Source: Synthetic Student Support Policy 2026.1, section 2.1</p>
+          </article>
+          <article>
+            <p class="detail-label">Evidence position</p>
+            <h3 id="evidence-title">Income record accepted</h3>
+            <p id="evidence-copy">The record was reviewed and accepted under the institution's evidence process.</p>
+            <p class="citation" id="evidence-note">Source date: 08 March 2026</p>
+          </article>
+          <article>
+            <p class="detail-label">What happens next</p>
+            <h3 id="next-title">Your institution completes any separate process.</h3>
+            <p id="next-copy">This explanation does not replace a registration, committee, or payment decision held elsewhere.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="trace-section" aria-labelledby="trace-title">
+        <p class="section-kicker">Traceable reasoning</p>
+        <h2 id="trace-title">What brought the system to this position?</h2>
+        <ol class="trace-list">
+          <li><span class="trace-dot trace-policy"></span><div><strong>Approved rule release</strong><p>Policy release 2026.1 was independently approved and is active for this scenario.</p></div></li>
+          <li><span class="trace-dot trace-evidence"></span><div><strong>Accepted evidence fact</strong><p id="trace-evidence">The income record is accepted and cited to its source.</p></div></li>
+          <li><span class="trace-dot trace-result"></span><div><strong>Explained position</strong><p id="trace-result">The active rule is satisfied. A separate institutional decision may still be required.</p></div></li>
+        </ol>
+      </section>
+
+      <section class="demo-boundary" aria-labelledby="boundary-title">
+        <p class="section-kicker">The boundary matters</p>
+        <h2 id="boundary-title">A real institution controls the real process.</h2>
+        <p>In production, students access only their institution's tenant workspace. The institution controls its policy releases, authoritative sources, exception routes, and human decision owners. Cacisa provides the traceable reasoning infrastructure.</p>
+      </section>
+    </main>
+    <footer>
+      <p>All content on this page is fictional and synthetic.</p>
+      <a href="index.html">Cacisa Systems</a>
+    </footer>
+    <script src="main.js"></script>
+  </body>
+</html>

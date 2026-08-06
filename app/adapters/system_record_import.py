@@ -68,10 +68,12 @@ class SystemRecordImportContract(BaseModel):
 
     format_version: Literal["1.0"] = "1.0"
     mapping_id: str = Field(min_length=3, max_length=120)
+    source_id: str | None = Field(default=None, min_length=3, max_length=120)
     source_system: str = Field(min_length=2, max_length=160)
     subject_identifier_column: str = Field(min_length=1, max_length=160)
     source_record_version_column: str = Field(min_length=1, max_length=160)
     source_as_of_date_column: str | None = Field(default=None, max_length=160)
+    record_state: Literal["confirmed", "provisional"] = "confirmed"
     fields: list[SystemRecordFieldMapping] = Field(min_length=1, max_length=200)
     max_rows: int = Field(default=10_000, ge=1, le=100_000)
     max_bytes: int = Field(default=20_000_000, ge=1_024, le=200_000_000)

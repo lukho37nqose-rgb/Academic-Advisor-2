@@ -6,13 +6,14 @@ Integrates with Enterprise Identity Providers (IdP) like Auth0 or Entra ID via J
 """
 
 import os
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from urllib.parse import urlsplit
 from fastapi import Header, HTTPException, status, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field
 import jwt
-from app.services.tenant_context import bind_authenticated_tenant
+from app.services.tenant_context import bind_authenticated_tenant, bind_provider_access
 
 
 _DEVELOPMENT_ENVIRONMENTS = {"development", "dev", "local", "test"}
@@ -33,14 +34,16 @@ def validate_production_oidc_configuration() -> None:
 
 class Role(str, Enum):
     TENANT_ADMIN = "tenant_admin"
-    METADATA_STEWARD = "metadata_steward"
-    INSTITUTIONAL_RECORDS_STEWARD = "institutional_records_steward"
-    ASSISTANCE_COORDINATOR = "assistance_coordinator"
-    RULE_AUTHOR = "rule_author"
-    RULE_APPROVER = "rule_approver"
-    POLICY_OWNER = "policy_owner"
+    STAFF_MEMBER = "staff_member"
+    POLICY_EDITOR = "policy_editor"
+    APPROVER = "approver"
     AUDITOR = "auditor"
     SUBJECT = "subject"
+
+
+class ProviderRole(str, Enum):
+    PLATFORM_OPERATOR = "platform_operator"
+    PLATFORM_AUDITOR = "platform_auditor"
 
 class UserIdentity(BaseModel):
     tenant_id: str
@@ -48,6 +51,13 @@ class UserIdentity(BaseModel):
     user_id: str
     subject_id: str | None = None
     domain_ids: list[str] = Field(default_factory=list)
+    acting_for: str | None = None
+    assignment_expires_at: datetime | None = None
+
+
+class ProviderIdentity(BaseModel):
+    user_id: str
+    role: ProviderRole
 
 security = HTTPBearer()
 
@@ -110,6 +120,34 @@ def _decode_token(token: str) -> dict[str, object]:
         ) from exc
 
 
+def _decode_provider_token(token: str) -> dict[str, object]:
+    """Validate provider-control-plane tokens against a separate trust boundary."""
+    jwks_url = os.environ.get("IRE_PROVIDER_JWKS_URL")
+    if jwks_url:
+        issuer = os.environ.get("IRE_PROVIDER_ISSUER")
+        audience = os.environ.get("IRE_PROVIDER_AUDIENCE")
+        if not issuer or not audience:
+            raise HTTPException(status_code=500, detail="Provider OIDC configuration is incomplete.")
+        try:
+            header = jwt.get_unverified_header(token)
+            algorithm = header.get("alg")
+            if algorithm not in {"RS256", "RS384", "RS512", "ES256", "ES384", "ES512"}:
+                raise jwt.InvalidAlgorithmError("Unsupported OIDC signing algorithm.")
+            signing_key = _jwt_jwks_client(jwks_url).get_signing_key_from_jwt(token)
+            return jwt.decode(token, signing_key.key, algorithms=[algorithm], audience=audience, issuer=issuer, options={"require": ["exp", "iss", "aud", "sub"]})
+        except jwt.PyJWTError as exc:
+            raise HTTPException(status_code=401, detail="Invalid or expired provider access token.") from exc
+    if os.environ.get("IRE_ENV", "development").lower() not in _DEVELOPMENT_ENVIRONMENTS:
+        raise HTTPException(status_code=500, detail="Production provider access requires separate provider OIDC configuration.")
+    secret = os.environ.get("JWT_SECRET_KEY")
+    if not secret:
+        raise HTTPException(status_code=500, detail="JWT_SECRET_KEY environment variable is missing.")
+    try:
+        return jwt.decode(token, secret, algorithms=["HS256"])
+    except jwt.InvalidTokenError as exc:
+        raise HTTPException(status_code=401, detail="Invalid or expired development provider token.") from exc
+
+
 def get_current_user(auth: HTTPAuthorizationCredentials = Depends(security)) -> UserIdentity:
     """
     Verifies the JWT from the Enterprise Identity Provider (OIDC/SAML).
@@ -145,12 +183,39 @@ def get_current_user(auth: HTTPAuthorizationCredentials = Depends(security)) -> 
             not isinstance(subject_claim_value, str) or not subject_claim_value.strip()
         ):
             raise ValueError(f"{subject_claim} must be a string for subject identities.")
+        delegation_claim = os.environ.get("IRE_DELEGATION_CLAIM", "ire_delegation")
+        delegation = payload.get(delegation_claim)
+        acting_for: str | None = None
+        assignment_expires_at: datetime | None = None
+        if delegation is not None:
+            if not isinstance(delegation, dict):
+                raise ValueError(f"{delegation_claim} must be an object.")
+            delegated_role = Role(str(delegation.get("role")))
+            delegated_domains = delegation.get("domain_ids")
+            expires_at = delegation.get("expires_at")
+            acting_for = delegation.get("acting_for")
+            if not isinstance(delegated_domains, list) or not all(isinstance(value, str) and value.strip() for value in delegated_domains):
+                raise ValueError("Delegated domain assignments must be a list of strings.")
+            if not isinstance(expires_at, str) or not isinstance(acting_for, str) or not acting_for.strip():
+                raise ValueError("A delegation needs an acting_for reference and expiry.")
+            assignment_expires_at = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+            if assignment_expires_at.tzinfo is None:
+                raise ValueError("Delegation expiry must include a timezone.")
+            assignment_expires_at = assignment_expires_at.astimezone(timezone.utc)
+            if assignment_expires_at <= datetime.now(timezone.utc) or assignment_expires_at > datetime.now(timezone.utc) + timedelta(days=90):
+                raise ValueError("Delegation is expired or exceeds the maximum 90-day duration.")
+            if delegated_role == Role.SUBJECT:
+                raise ValueError("Subject access cannot be delegated.")
+            role, domain_ids = delegated_role, delegated_domains
+
         identity = UserIdentity(
             tenant_id=tenant_id,
             role=role,
             user_id=user_id,
             subject_id=subject_claim_value if isinstance(subject_claim_value, str) else None,
             domain_ids=domain_ids,
+            acting_for=acting_for,
+            assignment_expires_at=assignment_expires_at,
         )
         bind_authenticated_tenant(identity.tenant_id)
         return identity
@@ -168,6 +233,28 @@ def require_role(allowed_roles: list[Role]):
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Operation requires one of roles: {[r.value for r in allowed_roles]}"
             )
+        return user
+    return role_checker
+
+
+def get_current_provider_user(auth: HTTPAuthorizationCredentials = Depends(security)) -> ProviderIdentity:
+    payload = _decode_provider_token(auth.credentials)
+    role_claim = os.environ.get("IRE_PROVIDER_ROLE_CLAIM", "platform_role")
+    user_id = payload.get("sub")
+    try:
+        if not isinstance(user_id, str) or not user_id.strip():
+            raise ValueError("sub must be a non-empty string.")
+        identity = ProviderIdentity(user_id=user_id, role=ProviderRole(str(payload[role_claim])))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=401, detail="Provider token is missing required platform identity claims.") from exc
+    bind_provider_access()
+    return identity
+
+
+def require_provider_role(allowed_roles: list[ProviderRole]):
+    def role_checker(user: ProviderIdentity = Depends(get_current_provider_user)):
+        if user.role not in allowed_roles:
+            raise HTTPException(status_code=403, detail="Provider operation is not permitted for this account.")
         return user
     return role_checker
 

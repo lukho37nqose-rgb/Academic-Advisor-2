@@ -8,15 +8,15 @@ subject data is introduced before the relevant control is working.
 ## 1. Establish the deployment boundary
 
 Before deploying, agree the pilot tenant, permitted decision domain, named
-policy owner, release approver, assistance owner, privacy contact, retention
+approver, staff-casework owner, privacy contact, retention
 period, and an offline or assisted path for people who cannot use the portal.
 For a UCT case study, use an explicitly approved policy subset and a synthetic
 or de-identified rehearsal corpus first. Do not upload a real handbook or
 student evidence merely to test the interface.
 
-Record the institution's role mapping. Start with least privilege: a policy
-author, a separate release approver, one assistance coordinator, one policy
-owner, an auditor, and a tightly controlled tenant-administrator account.
+Record the institution's role mapping. Start with least privilege: policy
+editors, staff members, independent approvers, auditors, subjects, and a
+tightly controlled tenant-administrator account.
 Avoid making a shared support mailbox or a service account a tenant
 administrator.
 
@@ -120,8 +120,9 @@ startup. Apply and rehearse the RLS requirements in
    worker failure on a large handbook source.
 6. Rehearse backup restoration, signing-key rotation, user revocation, source
    rollback, failed release handling, and security incident escalation.
-7. Only then enable a limited, approved shadow pilot. Keep external workflow
-   writes disabled: the current workflow boundary is intentionally fail-closed.
+7. Only then enable a limited, approved pre-production validation tenant. Keep
+   external workflow writes disabled: the current workflow boundary is
+   intentionally fail-closed.
 
 ## 7. Operate it as an institutional system
 

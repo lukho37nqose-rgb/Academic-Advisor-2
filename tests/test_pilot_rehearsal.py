@@ -29,7 +29,7 @@ def test_synthetic_pilot_rehearsal_is_repeatable_and_covers_safety_paths() -> No
     assert [case.actual_decision for case in first_report.cases] == [
         "ELIGIBLE",
         "INELIGIBLE",
-        "INELIGIBLE",
+        "NEEDS_MANUAL_REVIEW",
         "NEEDS_MANUAL_REVIEW",
     ]
     assert all(len(case.trace_sha256) == 64 for case in first_report.cases)

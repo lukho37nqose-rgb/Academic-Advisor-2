@@ -23,6 +23,7 @@ from app.infrastructure.repositories import (
     acquire_domain_governance_lock,
 )
 from app.services.auth import Role, UserIdentity, get_current_user
+from app.services.policy_source_manifest import build_policy_source_manifest
 
 
 def _signing_key() -> str:
@@ -97,9 +98,11 @@ def test_auditor_can_verify_a_release_from_its_stored_bundle(tmp_path, monkeypat
             "target": "status.active",
             "condition": "==",
             "value": True,
+            "source_citation": "Policy source section 1",
         }
     }
     rule_graph = compile_release_to_graph("rel_integrity", policy_payload)
+    source_manifest, source_manifest_hash = build_policy_source_manifest(policy_payload)
     signature_payload = {
         "policy": policy_payload,
         "release": {
@@ -110,7 +113,9 @@ def test_auditor_can_verify_a_release_from_its_stored_bundle(tmp_path, monkeypat
             "effective_from": "2026-01-01",
             "effective_until": None,
             "applicability": {},
+            "source_manifest_hash": source_manifest_hash,
         },
+        "source_manifest": source_manifest,
     }
     crypto = CryptoService()
     signature, payload_hash = crypto.sign_payload(signature_payload)
@@ -131,6 +136,7 @@ def test_auditor_can_verify_a_release_from_its_stored_bundle(tmp_path, monkeypat
                     signing_key_id=crypto.key_id,
                     signing_public_key=crypto.public_key_pem,
                     effective_from=date(2026, 1, 1),
+                    source_manifest_hash=source_manifest_hash,
                 ),
                 rule_graph,
                 policy_payload["root"],

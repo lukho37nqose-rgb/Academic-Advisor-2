@@ -3,8 +3,8 @@
 A controlled pilot may use an approved, reversible decision domain, synthetic
 or explicitly approved limited data, named policy and decision owners,
 institution-managed identity, private storage, observed Postgres/Redis, and a
-human assistance route. It should begin in shadow mode and compare explanation
-and routing behaviour with institutional practice.
+human assistance route. It should begin in non-operative validation and compare
+explanation and routing behaviour with institutional practice.
 
 A controlled pilot must not:
 

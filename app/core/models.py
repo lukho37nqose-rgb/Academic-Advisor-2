@@ -16,10 +16,20 @@ import datetime
 class Evidence(BaseModel):
     id: str = Field(default_factory=lambda: "ev_" + uuid.uuid4().hex)
     subject_id: str
-    source_type: Literal["erp_system", "document_upload", "user_input"]
+    source_type: Literal["system_record_export", "document_upload", "user_input"]
     storage_key: Optional[str] = None
     cryptographic_hash: str
     timestamp: str
+    # Provenance is distinct from confidence. It tells a later reader whether
+    # this was an official system record or a still-changing working record.
+    source_authority: Literal["official_system", "institutional_working_record", "subject_submitted"] = "subject_submitted"
+    record_state: Literal["confirmed", "provisional"] = "provisional"
+    source_system: Optional[str] = None
+    source_record_version: Optional[str] = None
+    source_as_of: Optional[datetime.datetime] = None
+    retention_expires_at: Optional[datetime.datetime] = None
+    deleted_at: Optional[datetime.datetime] = None
+    deletion_reason: Optional[str] = None
 
 class Claim(BaseModel):
     id: str = Field(default_factory=lambda: "cl_" + uuid.uuid4().hex)
@@ -40,6 +50,12 @@ class Fact(BaseModel):
     status: Literal["resolved", "needs_human_review"] = "resolved"
     supporting_claims: List[str] = Field(default_factory=list)
     rejected_claims: List[str] = Field(default_factory=list)
+    retention_expires_at: Optional[datetime.datetime] = None
+    deleted_at: Optional[datetime.datetime] = None
+    deletion_reason: Optional[str] = None
+    superseded_by_fact_id: Optional[str] = None
+    superseded_at: Optional[datetime.datetime] = None
+    superseding_reason: Optional[str] = None
 
 
 # --- Logical Architecture Models ---
@@ -74,6 +90,11 @@ class EvaluationContext(BaseModel):
     # replay proves both the rule version and why it was applicable.
     policy_as_of_date: Optional[datetime.date] = None
     policy_context: Dict[str, str] = Field(default_factory=dict)
+    source_authority: Literal["official_system", "institutional_working_record", "subject_submitted"] = "subject_submitted"
+    record_state: Literal["confirmed", "provisional"] = "provisional"
+    source_system: Optional[str] = None
+    source_record_version: Optional[str] = None
+    source_as_of: Optional[datetime.datetime] = None
     timestamp: str = Field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).isoformat())
     feature_flags: Dict[str, bool] = Field(default_factory=dict)
 
@@ -103,6 +124,9 @@ class ReasoningGraph(BaseModel):
     # Deterministic, citation-bound prose explanation of this trace. Always
     # generated AFTER the deterministic decision exists — never influences it.
     explanation: Optional[str] = None
+    retention_expires_at: Optional[datetime.datetime] = None
+    deleted_at: Optional[datetime.datetime] = None
+    deletion_reason: Optional[str] = None
     
     def add_node(self, node: GraphNode):
         self.nodes[node.id] = node
@@ -118,8 +142,8 @@ class EvaluationSummary(BaseModel):
 
 class WorkflowRule(BaseModel):
     id: str
-    trigger_condition: str
-    action_type: str
+    trigger_condition: Literal["overall == pass", "overall == fail"]
+    action_type: Literal["CREATE_INTERNAL_TASK", "PREPARE_NO_WRITE_EXPORT", "PREPARE_NOTIFICATION"]
     action_payload: Dict[str, Any]
 
 class Release(BaseModel):
@@ -128,7 +152,7 @@ class Release(BaseModel):
     version: str
     rule_graph_id: str
     digital_signature: str
-    # New releases retain a complete verification bundle. Legacy releases may
+    # New releases retain a complete verification bundle. Earlier releases may
     # omit these fields and remain replayable, but are not cryptographically
     # verifiable until superseded by a new signed release.
     signed_payload: Dict[str, Any] = Field(default_factory=dict)
@@ -142,6 +166,7 @@ class Release(BaseModel):
     applicability: Dict[str, List[str]] = Field(default_factory=dict)
     irp_version: str = "1.0.0"
     workflows: List[WorkflowRule] = Field(default_factory=list)
+    source_manifest_hash: Optional[str] = None
 
 class ReplaySnapshot(BaseModel):
     timestamp: str

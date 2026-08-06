@@ -8,11 +8,11 @@ authorisation to process UCT information. No UCT rule, person, record, or
 decision may enter the IRE until UCT supplies the authoritative source and the
 relevant institutional owners approve the pilot.
 
-The first deployment mode is **shadow mode**. It may reproduce and explain
-decisions for agreed test cases, but it must not create, alter, recommend as
-final, or automatically communicate an outcome that affects a student, staff
-member, applicant, or any other person. A human institutional process remains
-the sole source of an operative decision.
+The first deployment mode is **non-operative validation**. It may reproduce and
+explain decisions for agreed test cases, but it must not create, alter,
+recommend as final, or automatically communicate an outcome that affects a
+student, staff member, applicant, or any other person. A human institutional
+process remains the sole source of an operative decision.
 
 ## Pilot question
 
@@ -71,7 +71,7 @@ roles, test population, and integration path. It must not:
 
 ## Entry gates
 
-Before shadow evaluation begins, all of the following must be evidenced:
+Before non-operative evaluation begins, all of the following must be evidenced:
 
 - UCT owners above have accepted their responsibilities in writing.
 - The selected source corpus has immutable hashes, document metadata, page-level
@@ -96,13 +96,13 @@ of known outcomes, retains the signed release and citations for every outcome,
 and categorises every mismatch as a source, modelling, evidence, or governance
 issue.
 
-Stop shadow processing and notify the named UCT owners when there is a source
-integrity failure, cross-tenant or cross-subject access concern, unauthorised
-release, incorrect or inaccessible explanation, missing assisted route, or a
-security/privacy incident. Resume requires documented remediation and a fresh
-approval by the appropriate UCT owner.
+Stop validation processing and notify the named UCT owners when there is a
+source integrity failure, cross-tenant or cross-subject access concern,
+unauthorised release, incorrect or inaccessible explanation, missing assisted
+route, or a security/privacy incident. Resume requires documented remediation
+and a fresh approval by the appropriate UCT owner.
 
-Moving from shadow mode to any live decision support is a separate governance
-decision. It requires a new scope approval, independent legal/privacy and
-accessibility review, operational runbook rehearsal, and explicit agreement on
-human accountability for every outcome.
+Moving from non-operative validation to any live decision support is a separate
+governance decision. It requires a new scope approval, independent legal/privacy
+and accessibility review, operational runbook rehearsal, and explicit agreement
+on human accountability for every outcome.

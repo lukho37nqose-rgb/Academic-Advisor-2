@@ -1,0 +1,7 @@
+*
+!.gitignore
+!README.md
+!pilot_manifest.template.json
+!institutional_shadow_manifest.template.json
+!decision_dossier.template.md
+!transcript_fact_sheet.template.csv

@@ -67,12 +67,16 @@ async def _process_handbook_upload(handbook_id: str) -> bool:
             for page_number in range(start_page, len(reader.pages) + 1):
                 page_text = reader.pages[page_number - 1].extract_text() or ""
                 page_hash = hashlib.sha256(page_text.encode("utf-8")).hexdigest()
+                extraction_kind = "SELECTABLE_TEXT" if page_text.strip() else "SCANNED_OR_IMAGE_ONLY"
+                review_priority = "NORMAL" if page_text.strip() else "HIGH"
                 async with AsyncSessionLocal() as session:
                     await HandbookRepository(session).save_page(
                         handbook_id=handbook_id,
                         page_number=page_number,
                         text_content=page_text,
                         content_hash=page_hash,
+                        extraction_kind=extraction_kind,
+                        review_priority=review_priority,
                     )
 
         async with AsyncSessionLocal() as session:

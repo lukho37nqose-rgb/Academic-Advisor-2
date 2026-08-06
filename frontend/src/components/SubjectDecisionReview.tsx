@@ -165,6 +165,7 @@ export function SubjectDecisionReview({ graph }: { graph: ReasoningGraph }) {
                   <span className="font-medium">{statusLabels[reviewCase.status]}</span>
                   {reviewCase.response_due_at && <span className="text-muted">Response target: {formatDate(reviewCase.response_due_at)}</span>}
                 </div>
+                {reviewCase.responsible_group && <p className={`mt-2 ${reviewCase.is_escalated ? 'font-medium text-rose-700' : 'text-muted'}`}>{reviewCase.is_escalated ? `Escalation is due with ${reviewCase.fallback_group || reviewCase.responsible_group}.` : `This is being handled by ${reviewCase.responsible_group}.`}</p>}
                 <p className="mt-2 leading-relaxed">{reviewCase.message}</p>
                 {reviewCase.response_message && <p className="mt-2 border-l-2 border-border pl-3 text-muted">{reviewCase.response_message}</p>}
               </article>

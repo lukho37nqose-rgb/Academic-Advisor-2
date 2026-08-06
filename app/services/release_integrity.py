@@ -1,11 +1,11 @@
-"""Release-bundle verification used before a production evaluation runs."""
+"""Release-bundle verification used before an evaluation runs."""
 
-import os
 from typing import Any
 
 from app.core.compiler import compile_release_to_graph
 from app.core.crypto import CryptoService
 from app.core.models import Release, RuleGraph
+from app.services.policy_source_manifest import PolicySourceManifestError, build_policy_source_manifest
 
 
 class ReleaseIntegrityError(ValueError):
@@ -38,8 +38,22 @@ def verify_release_bundle(
 
     signed_release = release.signed_payload.get("release")
     signed_policy = release.signed_payload.get("policy")
-    if not isinstance(signed_release, dict) or not isinstance(signed_policy, dict):
-        return False, "signed payload has no release and policy objects"
+    signed_source_manifest = release.signed_payload.get("source_manifest")
+    if (
+        not isinstance(signed_release, dict)
+        or not isinstance(signed_policy, dict)
+        or not isinstance(signed_source_manifest, dict)
+    ):
+        return False, "signed payload has no release, policy, and source manifest objects"
+
+    try:
+        expected_source_manifest, expected_source_manifest_hash = build_policy_source_manifest(signed_policy)
+    except PolicySourceManifestError:
+        return False, "signed policy source manifest is invalid"
+    if signed_source_manifest != expected_source_manifest:
+        return False, "signed source manifest differs from the signed policy"
+    if release.source_manifest_hash != expected_source_manifest_hash:
+        return False, "persisted source manifest hash differs from the signed policy"
 
     expected_release: dict[str, Any] = {
         "id": release.id,
@@ -49,7 +63,13 @@ def verify_release_bundle(
         "effective_from": _iso_date(release.effective_from),
         "effective_until": _iso_date(release.effective_until),
         "applicability": release.applicability,
+        "source_manifest_hash": release.source_manifest_hash,
     }
+    signed_workflows = signed_release.get("workflows")
+    if signed_workflows is not None:
+        expected_release["workflows"] = [workflow.model_dump(mode="json") for workflow in release.workflows]
+    elif release.workflows:
+        return False, "persisted workflows are absent from the signed release payload"
     if signed_release != expected_release:
         return False, "persisted release metadata differs from its signed payload"
 
@@ -76,9 +96,7 @@ def require_release_integrity_for_evaluation(
     release: Release,
     compiled_rule_graph: RuleGraph,
 ) -> None:
-    """Fail closed for production evaluations while keeping legacy fixtures replayable locally."""
-    if os.environ.get("IRE_ENV", "development").lower() != "production":
-        return
+    """Fail closed for every evaluation path."""
     valid, reason = verify_release_bundle(release, compiled_rule_graph)
     if not valid:
         raise ReleaseIntegrityError(reason)

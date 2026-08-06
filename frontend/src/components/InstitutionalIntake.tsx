@@ -19,9 +19,20 @@ import {
   type InstitutionalIntakeResponse,
   type InstitutionalRuleInput,
   type InstitutionalRuleOperator,
+  type InstitutionalRootOperator,
+  type InstitutionalRuleGroupInput,
+  type InstitutionalRuleGroupOperator,
 } from '../api/client';
 
 type IntakeStep = 1 | 2 | 3 | 4;
+type SubjectPositionType = 'curriculum' | 'assessment_eligibility' | 'eligibility' | 'institutional_standing' | 'other';
+type DecisionAutomationMode = 'automatic' | 'human_confirmation_required';
+type DomainStarterProfileId =
+  | 'custom'
+  | 'higher_education_curriculum'
+  | 'assessment_eligibility'
+  | 'general_eligibility'
+  | 'institutional_standing';
 
 const steps: Array<{ id: IntakeStep; label: string; icon: typeof Building2 }> = [
   { id: 1, label: 'Decision', icon: Building2 },
@@ -34,6 +45,72 @@ const dataTypes: Array<{ value: InstitutionalFactDataType; label: string }> = [
   { value: 'text', label: 'Text' },
   { value: 'number', label: 'Number' },
   { value: 'yes_no', label: 'Yes / no' },
+];
+
+const domainStarterProfiles: Array<{
+  id: DomainStarterProfileId;
+  label: string;
+  description: string;
+  domainName?: string;
+  governedPersonLabel: string;
+  positionCollectionLabel: string;
+  subjectPositionType: SubjectPositionType;
+  subjectPositionLabel?: string;
+  automationMode: DecisionAutomationMode;
+}> = [
+  {
+    id: 'custom',
+    label: 'Custom decision domain',
+    description: 'Start with neutral language and define this domain yourself.',
+    governedPersonLabel: 'person',
+    positionCollectionLabel: 'current positions',
+    subjectPositionType: 'other',
+    automationMode: 'human_confirmation_required',
+  },
+  {
+    id: 'higher_education_curriculum',
+    label: 'Higher education curriculum',
+    description: 'Curriculum, progression, registration, or graduation-readiness reasoning.',
+    domainName: 'Curriculum progression',
+    governedPersonLabel: 'student',
+    positionCollectionLabel: 'academic positions',
+    subjectPositionType: 'curriculum',
+    subjectPositionLabel: 'Curriculum progression',
+    automationMode: 'human_confirmation_required',
+  },
+  {
+    id: 'assessment_eligibility',
+    label: 'Assessment eligibility',
+    description: 'DP, DPR, coursework, attendance, or assessment-access reasoning.',
+    domainName: 'Assessment eligibility',
+    governedPersonLabel: 'student',
+    positionCollectionLabel: 'assessment positions',
+    subjectPositionType: 'assessment_eligibility',
+    subjectPositionLabel: 'Assessment eligibility',
+    automationMode: 'human_confirmation_required',
+  },
+  {
+    id: 'general_eligibility',
+    label: 'General eligibility',
+    description: 'Funding, support, admission, benefit, or service-access reasoning.',
+    domainName: 'Eligibility',
+    governedPersonLabel: 'applicant',
+    positionCollectionLabel: 'eligibility positions',
+    subjectPositionType: 'eligibility',
+    subjectPositionLabel: 'Eligibility',
+    automationMode: 'human_confirmation_required',
+  },
+  {
+    id: 'institutional_standing',
+    label: 'Institutional standing',
+    description: 'Standing, compliance, appeals, exclusions, or other status reasoning.',
+    domainName: 'Institutional standing',
+    governedPersonLabel: 'person',
+    positionCollectionLabel: 'institutional positions',
+    subjectPositionType: 'institutional_standing',
+    subjectPositionLabel: 'Institutional standing',
+    automationMode: 'human_confirmation_required',
+  },
 ];
 
 const operatorOptions: Record<InstitutionalFactDataType, Array<{ value: InstitutionalRuleOperator; label: string }>> = {
@@ -77,6 +154,10 @@ function newRule(factId: string): InstitutionalRuleInput {
   };
 }
 
+function newRuleGroup(): InstitutionalRuleGroupInput {
+  return { id: nextId('route'), label: '', operator: 'all', children: [] };
+}
+
 function errorMessage(error: unknown) {
   const maybeAxios = error as { response?: { data?: { detail?: unknown } }; message?: string };
   const detail = maybeAxios.response?.data?.detail;
@@ -85,28 +166,43 @@ function errorMessage(error: unknown) {
 
 export function InstitutionalIntake() {
   const [step, setStep] = useState<IntakeStep>(1);
+  const [starterProfileId, setStarterProfileId] = useState<DomainStarterProfileId>('custom');
   const [institutionName, setInstitutionName] = useState('');
   const [domainName, setDomainName] = useState('');
+  const [governedPersonLabel, setGovernedPersonLabel] = useState('person');
+  const [positionCollectionLabel, setPositionCollectionLabel] = useState('current positions');
+  const [subjectPositionType, setSubjectPositionType] = useState<SubjectPositionType>('other');
+  const [subjectPositionLabel, setSubjectPositionLabel] = useState('');
+  const [automationMode, setAutomationMode] = useState<DecisionAutomationMode>('human_confirmation_required');
   const [policyName, setPolicyName] = useState('');
   const [publicPolicyGuide, setPublicPolicyGuide] = useState(true);
   const [assistanceRequestsEnabled, setAssistanceRequestsEnabled] = useState(true);
   const [supportResponseTargetHours, setSupportResponseTargetHours] = useState('48');
-  const [decisionReviewEnabled, setDecisionReviewEnabled] = useState(false);
+  const [decisionReviewEnabled, setDecisionReviewEnabled] = useState(true);
   const [decisionReviewResponseTargetHours, setDecisionReviewResponseTargetHours] = useState('120');
   const [supportPrivacyNoticeUrl, setSupportPrivacyNoticeUrl] = useState('');
   const [offlineAssistanceInstructions, setOfflineAssistanceInstructions] = useState('');
+  const [caseworkPrimaryGroup, setCaseworkPrimaryGroup] = useState('');
+  const [caseworkFallbackGroup, setCaseworkFallbackGroup] = useState('');
+  const [caseworkEscalationHours, setCaseworkEscalationHours] = useState('72');
   const [facts, setFacts] = useState<InstitutionalFactInput[]>([newFact()]);
   const [rules, setRules] = useState<InstitutionalRuleInput[]>([]);
+  const [rootOperator, setRootOperator] = useState<InstitutionalRootOperator>('all');
+  const [usePolicyRoutes, setUsePolicyRoutes] = useState(false);
+  const [ruleGroups, setRuleGroups] = useState<InstitutionalRuleGroupInput[]>([]);
+  const [rootGroupId, setRootGroupId] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<InstitutionalIntakeResponse | null>(null);
 
   const factsById = useMemo(() => new Map(facts.map((fact) => [fact.id, fact])), [facts]);
-  const decisionReady = institutionName.trim().length >= 2 && domainName.trim().length >= 2;
+  const decisionReady = institutionName.trim().length >= 2 && domainName.trim().length >= 2 && governedPersonLabel.trim().length >= 2;
   const humanCaseworkEnabled = assistanceRequestsEnabled || decisionReviewEnabled;
   const caseworkContactReady = !humanCaseworkEnabled || (
     /^https?:\/\//.test(supportPrivacyNoticeUrl.trim()) &&
     offlineAssistanceInstructions.trim().length >= 10
+    && caseworkPrimaryGroup.trim().length >= 3
+    && Number.isInteger(Number(caseworkEscalationHours)) && Number(caseworkEscalationHours) >= 1
   );
   const assistanceReady = !assistanceRequestsEnabled || (
     Number.isInteger(Number(supportResponseTargetHours)) && Number(supportResponseTargetHours) >= 1
@@ -116,7 +212,11 @@ export function InstitutionalIntake() {
   );
   const caseworkReady = caseworkContactReady && assistanceReady && decisionReviewReady;
   const factsReady = facts.length > 0 && facts.every((fact) => fact.label.trim().length >= 2);
-  const policyReady = rules.length > 0 && rules.every((rule) => (
+  const groupsReady = !usePolicyRoutes || (
+    rootGroupId.length > 0 && ruleGroups.some((group) => group.id === rootGroupId) &&
+    ruleGroups.every((group) => group.label.trim().length >= 2 && group.children.length > 0 && (group.operator !== 'not' || group.children.length === 1))
+  );
+  const policyReady = rules.length > 0 && groupsReady && rules.every((rule) => (
     rule.label.trim().length >= 2 &&
     rule.source_citation.trim().length >= 3 &&
     factsById.has(rule.fact_id) &&
@@ -124,6 +224,18 @@ export function InstitutionalIntake() {
   ));
 
   const addFact = () => setFacts((current) => [...current, newFact()]);
+  const applyStarterProfile = (profileId: DomainStarterProfileId) => {
+    const profile = domainStarterProfiles.find((item) => item.id === profileId) || domainStarterProfiles[0];
+    setStarterProfileId(profileId);
+    setGovernedPersonLabel(profile.governedPersonLabel);
+    setPositionCollectionLabel(profile.positionCollectionLabel);
+    setSubjectPositionType(profile.subjectPositionType);
+    setSubjectPositionLabel(profile.subjectPositionLabel || '');
+    setAutomationMode(profile.automationMode);
+    if (profile.domainName) {
+      setDomainName((current) => current.trim() ? current : profile.domainName || current);
+    }
+  };
   const updateFact = (id: string, patch: Partial<InstitutionalFactInput>) => {
     setFacts((current) => current.map((fact) => (fact.id === id ? { ...fact, ...patch } : fact)));
     if (patch.data_type) {
@@ -147,7 +259,27 @@ export function InstitutionalIntake() {
   const updateRule = (id: string, patch: Partial<InstitutionalRuleInput>) => {
     setRules((current) => current.map((rule) => (rule.id === id ? { ...rule, ...patch } : rule)));
   };
-  const removeRule = (id: string) => setRules((current) => current.filter((rule) => rule.id !== id));
+  const removeRule = (id: string) => {
+    setRules((current) => current.filter((rule) => rule.id !== id));
+    setRuleGroups((current) => current.map((group) => ({
+      ...group,
+      children: group.children.filter((child) => child !== id),
+    })));
+  };
+  const addRuleGroup = () => {
+    const group = newRuleGroup();
+    setRuleGroups((current) => [...current, group]);
+    setRootGroupId((current) => current || group.id);
+  };
+  const updateRuleGroup = (id: string, patch: Partial<InstitutionalRuleGroupInput>) => {
+    setRuleGroups((current) => current.map((group) => group.id === id ? { ...group, ...patch } : group));
+  };
+  const removeRuleGroup = (id: string) => {
+    setRuleGroups((current) => current
+      .filter((group) => group.id !== id)
+      .map((group) => ({ ...group, children: group.children.filter((child) => child !== id) })));
+    setRootGroupId((current) => current === id ? '' : current);
+  };
 
   const moveForward = () => {
     if (step === 1 && decisionReady) setStep(2);
@@ -162,6 +294,11 @@ export function InstitutionalIntake() {
       const payload: InstitutionalIntakePayload = {
         institution_name: institutionName.trim(),
         domain_name: domainName.trim(),
+        governed_person_label: governedPersonLabel.trim(),
+        position_collection_label: positionCollectionLabel.trim() || undefined,
+        subject_position_type: subjectPositionType,
+        subject_position_label: subjectPositionLabel.trim() || undefined,
+        automation_mode: automationMode,
         policy_name: policyName.trim() || undefined,
         public_policy_guide: publicPolicyGuide,
         assistance_requests_enabled: assistanceRequestsEnabled,
@@ -170,7 +307,13 @@ export function InstitutionalIntake() {
         decision_review_response_target_hours: decisionReviewEnabled ? Number(decisionReviewResponseTargetHours) : undefined,
         support_privacy_notice_url: supportPrivacyNoticeUrl.trim() || undefined,
         offline_assistance_instructions: offlineAssistanceInstructions.trim() || undefined,
+        casework_primary_group: caseworkPrimaryGroup.trim() || undefined,
+        casework_fallback_group: caseworkFallbackGroup.trim() || undefined,
+        casework_escalation_after_hours: Number(caseworkEscalationHours),
         facts: facts.map((fact) => ({ ...fact, label: fact.label.trim() })),
+        root_operator: rootOperator,
+        rule_groups: usePolicyRoutes ? ruleGroups.map((group) => ({ ...group, label: group.label.trim() })) : undefined,
+        root_group_id: usePolicyRoutes ? rootGroupId : undefined,
         rules: rules.map((rule) => {
           const fact = factsById.get(rule.fact_id);
           const value = fact?.data_type === 'number' ? Number(rule.value) : rule.value;
@@ -262,6 +405,23 @@ export function InstitutionalIntake() {
       {step === 1 && (
         <section className="max-w-2xl space-y-5">
           <h3 className="text-base font-semibold">Decision domain</h3>
+          <div className="space-y-2 text-sm">
+            <label htmlFor="starter-profile" className="block font-medium">Starter profile</label>
+            <select
+              id="starter-profile"
+              aria-describedby="starter-profile-description"
+              value={starterProfileId}
+              onChange={(event) => applyStarterProfile(event.target.value as DomainStarterProfileId)}
+              className="w-full rounded border border-border bg-white px-3 py-2 outline-none focus:border-primary"
+            >
+              {domainStarterProfiles.map((profile) => (
+                <option key={profile.id} value={profile.id}>{profile.label}</option>
+              ))}
+            </select>
+            <p id="starter-profile-description" className="text-muted">
+              {domainStarterProfiles.find((profile) => profile.id === starterProfileId)?.description}
+            </p>
+          </div>
           <label className="block space-y-2 text-sm font-medium">
             Institution name
             <input value={institutionName} onChange={(event) => setInstitutionName(event.target.value)} className="w-full rounded border border-border px-3 py-2 outline-none focus:border-primary" />
@@ -270,6 +430,62 @@ export function InstitutionalIntake() {
             Decision domain
             <input value={domainName} onChange={(event) => setDomainName(event.target.value)} className="w-full rounded border border-border px-3 py-2 outline-none focus:border-primary" />
           </label>
+          <label className="block space-y-2 text-sm font-medium">
+            Person described by this policy
+            <input
+              value={governedPersonLabel}
+              onChange={(event) => { setStarterProfileId('custom'); setGovernedPersonLabel(event.target.value); }}
+              placeholder="student, applicant, beneficiary"
+              className="w-full rounded border border-border px-3 py-2 outline-none focus:border-primary"
+            />
+          </label>
+          <fieldset className="space-y-3 border-y border-border py-4">
+            <legend className="text-sm font-medium">How should this appear to the person governed by this policy?</legend>
+            <label className="block space-y-2 text-sm">
+              Position category
+              <select
+                value={subjectPositionType}
+                onChange={(event) => { setStarterProfileId('custom'); setSubjectPositionType(event.target.value as SubjectPositionType); }}
+                className="w-full rounded border border-border bg-white px-3 py-2 outline-none focus:border-primary"
+              >
+                <option value="curriculum">Curriculum or progression</option>
+                <option value="assessment_eligibility">Assessment eligibility (for example DP)</option>
+                <option value="eligibility">Eligibility</option>
+                <option value="institutional_standing">Institutional standing</option>
+                <option value="other">Another institutional position</option>
+              </select>
+            </label>
+            <label className="block space-y-2 text-sm">
+              Decision handling
+              <select
+                value={automationMode}
+                onChange={(event) => { setStarterProfileId('custom'); setAutomationMode(event.target.value as DecisionAutomationMode); }}
+                className="w-full rounded border border-border bg-white px-3 py-2 outline-none focus:border-primary"
+              >
+                <option value="human_confirmation_required">Human confirmation required</option>
+                <option value="automatic">Automatic policy position</option>
+              </select>
+              <span className="block text-muted">Use human confirmation for any outcome that could materially limit a person&apos;s access, progression, funding, or standing.</span>
+            </label>
+            <label className="block space-y-2 text-sm">
+              Person-facing name <span className="text-muted">Optional</span>
+              <input
+                value={subjectPositionLabel}
+                onChange={(event) => { setStarterProfileId('custom'); setSubjectPositionLabel(event.target.value); }}
+                placeholder="Uses the decision domain name when blank"
+                className="w-full rounded border border-border px-3 py-2 outline-none focus:border-primary"
+              />
+            </label>
+            <label className="block space-y-2 text-sm">
+              List heading <span className="text-muted">Optional</span>
+              <input
+                value={positionCollectionLabel}
+                onChange={(event) => { setStarterProfileId('custom'); setPositionCollectionLabel(event.target.value); }}
+                placeholder="current positions"
+                className="w-full rounded border border-border px-3 py-2 outline-none focus:border-primary"
+              />
+            </label>
+          </fieldset>
           <label className="block space-y-2 text-sm font-medium">
             Policy name <span className="font-normal text-muted">Optional</span>
             <input value={policyName} onChange={(event) => setPolicyName(event.target.value)} className="w-full rounded border border-border px-3 py-2 outline-none focus:border-primary" />
@@ -284,7 +500,7 @@ export function InstitutionalIntake() {
               <span className="font-medium">Accept requests for human assistance</span>
             </label>
             <label className="flex items-center gap-3">
-              <input type="checkbox" checked={decisionReviewEnabled} onChange={(event) => setDecisionReviewEnabled(event.target.checked)} className="h-4 w-4" />
+              <input type="checkbox" checked={decisionReviewEnabled} disabled={automationMode === 'human_confirmation_required'} onChange={(event) => setDecisionReviewEnabled(event.target.checked)} className="h-4 w-4" />
               <span className="font-medium">Enable decision review cases</span>
             </label>
             {humanCaseworkEnabled && <div className="grid gap-4 border-l-2 border-border pl-4 pt-2">
@@ -304,6 +520,11 @@ export function InstitutionalIntake() {
                 Assisted or offline contact route
                 <textarea aria-label="Assisted or offline contact route" rows={3} value={offlineAssistanceInstructions} onChange={(event) => setOfflineAssistanceInstructions(event.target.value)} className="w-full resize-y rounded border border-border px-3 py-2 font-normal outline-none focus:border-primary" />
               </label>
+              <div className="grid gap-4 border-t border-border pt-4 sm:grid-cols-2">
+                <label className="grid gap-2 text-sm font-medium">Responsible office or group<input aria-label="Responsible office or group" value={caseworkPrimaryGroup} onChange={(event) => setCaseworkPrimaryGroup(event.target.value)} placeholder="Faculty undergraduate office" className="rounded border border-border px-3 py-2 font-normal outline-none focus:border-primary" /></label>
+                <label className="grid gap-2 text-sm font-medium">Fallback office or group <span className="font-normal text-muted">Optional</span><input aria-label="Fallback office or group" value={caseworkFallbackGroup} onChange={(event) => setCaseworkFallbackGroup(event.target.value)} placeholder="Central support office" className="rounded border border-border px-3 py-2 font-normal outline-none focus:border-primary" /></label>
+                <label className="grid gap-2 text-sm font-medium">Escalate after hours<input aria-label="Escalate after hours" type="number" min="1" value={caseworkEscalationHours} onChange={(event) => setCaseworkEscalationHours(event.target.value)} className="w-40 rounded border border-border px-3 py-2 font-normal outline-none focus:border-primary" /></label>
+              </div>
             </div>}
           </div>
         </section>
@@ -343,12 +564,30 @@ export function InstitutionalIntake() {
       {step === 3 && (
         <section className="space-y-5">
           <div className="flex items-center justify-between gap-4">
-            <h3 className="text-base font-semibold">Conditions that must all hold</h3>
+            <div>
+              <h3 className="text-base font-semibold">Decision conditions</h3>
+              <p className="mt-1 text-sm text-muted">Choose the simplest truthful way these conditions work together.</p>
+            </div>
             <button type="button" onClick={addRule} className="inline-flex items-center gap-2 rounded border border-border px-3 py-2 text-sm font-medium hover:bg-accent">
               <Plus className="h-4 w-4" />
               Add condition
             </button>
           </div>
+          <fieldset className="flex flex-wrap gap-4 border-y border-border py-4 text-sm">
+            <legend className="sr-only">How conditions combine</legend>
+            <label className="flex items-center gap-2 font-medium">
+              <input type="radio" name="root-operator" checked={rootOperator === 'all'} onChange={() => setRootOperator('all')} />
+              Every condition must hold
+            </label>
+            <label className="flex items-center gap-2 font-medium">
+              <input type="radio" name="root-operator" checked={rootOperator === 'any'} onChange={() => setRootOperator('any')} />
+              Any condition can be sufficient
+            </label>
+          </fieldset>
+          <label className="flex items-center gap-3 border-b border-border pb-4 text-sm">
+            <input type="checkbox" checked={usePolicyRoutes} onChange={(event) => setUsePolicyRoutes(event.target.checked)} className="h-4 w-4" />
+            <span><span className="font-medium">This policy has alternatives or an exception</span><span className="ml-2 text-muted">Optional</span></span>
+          </label>
           {rules.length === 0 && <p className="text-sm text-muted">Add the first condition for this policy.</p>}
           <div className="space-y-6">
             {rules.map((rule) => {
@@ -399,6 +638,37 @@ export function InstitutionalIntake() {
               );
             })}
           </div>
+          {usePolicyRoutes && <section className="space-y-4 border-t border-border pt-5">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h4 className="text-sm font-semibold">Policy routes</h4>
+                <p className="mt-1 text-sm text-muted">Combine conditions into a named route. A later route may use an earlier route, so circular logic is not possible here.</p>
+              </div>
+              <button type="button" onClick={addRuleGroup} className="inline-flex items-center gap-2 rounded border border-border px-3 py-2 text-sm font-medium hover:bg-accent"><Plus className="h-4 w-4" />Add route</button>
+            </div>
+            {ruleGroups.length === 0 && <p className="text-sm text-muted">Add a route, then choose it as the policy decision route.</p>}
+            {ruleGroups.map((group, index) => {
+              const choices = [
+                ...rules.map((rule) => ({ id: rule.id, label: rule.label || 'Untitled condition', kind: 'Condition' })),
+                ...ruleGroups.slice(0, index).map((available) => ({ id: available.id, label: available.label || 'Untitled route', kind: 'Route' })),
+              ];
+              return <div key={group.id} className="space-y-4 border-b border-border pb-5">
+                <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_180px_36px] sm:items-end">
+                  <label className="grid gap-2 text-sm font-medium">Route name<input value={group.label} onChange={(event) => updateRuleGroup(group.id, { label: event.target.value })} placeholder="Standard eligibility route" className="rounded border border-border px-3 py-2 font-normal outline-none focus:border-primary" /></label>
+                  <label className="grid gap-2 text-sm font-medium">How items combine<select value={group.operator} onChange={(event) => {
+                    const operator = event.target.value as InstitutionalRuleGroupOperator;
+                    updateRuleGroup(group.id, { operator, children: operator === 'not' ? group.children.slice(0, 1) : group.children });
+                  }} className="rounded border border-border bg-white px-3 py-2 font-normal outline-none focus:border-primary"><option value="all">Every item holds</option><option value="any">Any item holds</option><option value="not">Exception: item does not hold</option></select></label>
+                  <button type="button" title="Remove route" aria-label="Remove route" onClick={() => removeRuleGroup(group.id)} className="inline-flex h-9 w-9 items-center justify-center rounded border border-border text-muted hover:bg-accent"><Trash2 className="h-4 w-4" /></button>
+                </div>
+                <fieldset className="grid gap-2 text-sm"><legend className="font-medium">Items in this route{group.operator === 'not' ? ' (choose one)' : ''}</legend>{choices.map((choice) => <label key={choice.id} className="flex items-center gap-3"><input type={group.operator === 'not' ? 'radio' : 'checkbox'} name={group.operator === 'not' ? `route-${group.id}` : undefined} checked={group.children.includes(choice.id)} onChange={(event) => {
+                  const children = group.operator === 'not' ? (event.target.checked ? [choice.id] : []) : (event.target.checked ? [...group.children, choice.id] : group.children.filter((child) => child !== choice.id));
+                  updateRuleGroup(group.id, { children });
+                }} /><span>{choice.label} <span className="text-muted">{choice.kind}</span></span></label>)}</fieldset>
+              </div>;
+            })}
+            {ruleGroups.length > 0 && <label className="grid max-w-md gap-2 text-sm font-medium">Policy decision route<select value={rootGroupId} onChange={(event) => setRootGroupId(event.target.value)} className="rounded border border-border bg-white px-3 py-2 font-normal outline-none focus:border-primary"><option value="">Choose a route</option>{ruleGroups.map((group) => <option key={group.id} value={group.id}>{group.label || 'Untitled route'}</option>)}</select></label>}
+          </section>}
         </section>
       )}
 
@@ -408,8 +678,11 @@ export function InstitutionalIntake() {
           <dl className="grid gap-x-8 gap-y-5 border-y border-border py-5 sm:grid-cols-2">
             <div><dt className="text-xs font-semibold uppercase tracking-normal text-muted">Institution</dt><dd className="mt-1 text-sm font-medium">{institutionName}</dd></div>
             <div><dt className="text-xs font-semibold uppercase tracking-normal text-muted">Decision domain</dt><dd className="mt-1 text-sm font-medium">{domainName}</dd></div>
+            <div><dt className="text-xs font-semibold uppercase tracking-normal text-muted">Person described</dt><dd className="mt-1 text-sm font-medium">{governedPersonLabel}</dd></div>
+            <div><dt className="text-xs font-semibold uppercase tracking-normal text-muted">Position shown</dt><dd className="mt-1 text-sm font-medium">{subjectPositionLabel || domainName}</dd></div>
             <div><dt className="text-xs font-semibold uppercase tracking-normal text-muted">Facts</dt><dd className="mt-1 text-sm font-medium">{facts.length}</dd></div>
             <div><dt className="text-xs font-semibold uppercase tracking-normal text-muted">Conditions</dt><dd className="mt-1 text-sm font-medium">{rules.length}</dd></div>
+            <div><dt className="text-xs font-semibold uppercase tracking-normal text-muted">Decision logic</dt><dd className="mt-1 text-sm font-medium">{usePolicyRoutes ? `${ruleGroups.length} policy route${ruleGroups.length === 1 ? '' : 's'}` : rootOperator === 'all' ? 'Every condition must hold' : 'Any condition can be sufficient'}</dd></div>
             <div><dt className="text-xs font-semibold uppercase tracking-normal text-muted">Policy guide</dt><dd className="mt-1 text-sm font-medium">{publicPolicyGuide ? 'Public after approval' : 'Not public'}</dd></div>
             <div><dt className="text-xs font-semibold uppercase tracking-normal text-muted">Human assistance</dt><dd className="mt-1 text-sm font-medium">{assistanceRequestsEnabled ? 'Available' : 'Not available'}</dd></div>
             {assistanceRequestsEnabled && <div><dt className="text-xs font-semibold uppercase tracking-normal text-muted">Response target</dt><dd className="mt-1 text-sm font-medium">{supportResponseTargetHours} hours</dd></div>}

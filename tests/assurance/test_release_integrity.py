@@ -24,6 +24,7 @@ from app.services.release_integrity import (
     require_release_integrity_for_evaluation,
     verify_release_bundle,
 )
+from app.services.policy_source_manifest import build_policy_source_manifest
 
 
 def _signing_key() -> str:
@@ -51,6 +52,7 @@ def _signed_release(monkeypatch: pytest.MonkeyPatch) -> tuple[Release, RuleGraph
     }
     release_id = "rel_assurance"
     graph = compile_release_to_graph(release_id, policy)
+    source_manifest, source_manifest_hash = build_policy_source_manifest(policy)
     payload = {
         "policy": policy,
         "release": {
@@ -61,7 +63,9 @@ def _signed_release(monkeypatch: pytest.MonkeyPatch) -> tuple[Release, RuleGraph
             "effective_from": "2026-01-01",
             "effective_until": None,
             "applicability": {"entry_year": ["2026"]},
+            "source_manifest_hash": source_manifest_hash,
         },
+        "source_manifest": source_manifest,
     }
     crypto = CryptoService()
     signature, payload_hash = crypto.sign_payload(payload)
@@ -78,6 +82,7 @@ def _signed_release(monkeypatch: pytest.MonkeyPatch) -> tuple[Release, RuleGraph
             signing_public_key=crypto.public_key_pem,
             effective_from=date(2026, 1, 1),
             applicability={"entry_year": ["2026"]},
+            source_manifest_hash=source_manifest_hash,
         ),
         graph,
     )
@@ -87,6 +92,68 @@ def test_complete_release_bundle_binds_policy_metadata_and_compiled_graph(monkey
     release, graph = _signed_release(monkeypatch)
 
     assert verify_release_bundle(release, graph) == (True, "verified")
+
+
+def test_compiler_assigns_stable_ids_when_policy_nodes_do_not_define_them(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GOVERNANCE_PRIVATE_KEY", _signing_key())
+    monkeypatch.setenv("GOVERNANCE_KEY_ID", "assurance-signing-key-2026")
+    policy = {
+        "root": {
+            "label": "Active status",
+            "operator": "AND",
+            "children": [
+                {
+                    "label": "Current status is active",
+                    "target": "status.active",
+                    "condition": "==",
+                    "value": True,
+                    "source_citation": "Policy section 4.1",
+                },
+                {
+                    "label": "Has approval marker",
+                    "target": "approval.present",
+                    "condition": "==",
+                    "value": True,
+                    "source_citation": "Policy section 4.2",
+                },
+            ],
+        }
+    }
+
+    first_graph = compile_release_to_graph("rel_stable_a", policy)
+    second_graph = compile_release_to_graph("rel_stable_b", policy)
+    source_manifest, source_manifest_hash = build_policy_source_manifest(policy)
+    crypto = CryptoService()
+    payload = {
+        "policy": policy,
+        "release": {
+            "id": "rel_stable_a",
+            "domain_id": "dom_assurance",
+            "version": "2026.1",
+            "rule_graph_id": first_graph.id,
+            "effective_from": None,
+            "effective_until": None,
+            "applicability": {},
+            "source_manifest_hash": source_manifest_hash,
+        },
+        "source_manifest": source_manifest,
+    }
+    signature, payload_hash = crypto.sign_payload(payload)
+    release = Release(
+        id="rel_stable_a",
+        domain_id="dom_assurance",
+        version="2026.1",
+        rule_graph_id=first_graph.id,
+        digital_signature=signature,
+        signed_payload=payload,
+        signed_payload_hash=payload_hash,
+        signing_key_id=crypto.key_id,
+        signing_public_key=crypto.public_key_pem,
+        source_manifest_hash=source_manifest_hash,
+    )
+
+    assert first_graph.root_expression == second_graph.root_expression
+    assert verify_release_bundle(release, second_graph) == (True, "verified")
 
 
 @pytest.mark.parametrize(
@@ -133,8 +200,25 @@ def test_changed_signed_policy_or_compiled_graph_invalidates_the_bundle(monkeypa
     assert verify_release_bundle(release, altered_graph) == (False, "persisted compiled graph differs from the signed policy")
 
 
-def test_production_evaluation_rejects_legacy_or_tampered_release(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("IRE_ENV", "production")
+def test_release_integrity_binds_source_manifest_hash(monkeypatch: pytest.MonkeyPatch) -> None:
+    release, graph = _signed_release(monkeypatch)
+
+    altered_manifest_hash = release.model_copy(update={"source_manifest_hash": "0" * 64})
+    assert verify_release_bundle(altered_manifest_hash, graph) == (
+        False,
+        "persisted source manifest hash differs from the signed policy",
+    )
+
+    altered_payload = deepcopy(release.signed_payload)
+    altered_payload["source_manifest"]["entries"][0]["source_citation"] = "Substituted source"
+    altered_manifest = release.model_copy(update={"signed_payload": altered_payload})
+    assert verify_release_bundle(altered_manifest, graph) == (
+        False,
+        "signed source manifest differs from the signed policy",
+    )
+
+
+def test_evaluation_rejects_legacy_or_tampered_release_in_any_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     release, graph = _signed_release(monkeypatch)
 
     legacy = release.model_copy(update={"signed_payload": {}, "signed_payload_hash": None})

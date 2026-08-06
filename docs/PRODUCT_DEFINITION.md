@@ -55,9 +55,9 @@ Certified institutional context is currently retained alongside this path as
 temporal explanation. The target path may consume a named context type only
 when a future signed release explicitly authorises that effect.
 
-## Proven In The Current Prototype
+## Implemented In The Current Build
 
-The actual API path has demonstrated:
+The actual API path currently supports:
 
 - a policy draft authored by one identity;
 - rejection when that author attempted to approve the same draft;
@@ -71,9 +71,9 @@ The actual API path has demonstrated:
   institutional record or decision.
 
 This establishes that the domain-neutral mechanism and governance gate work
-under the tested conditions.
+under the repository's tested conditions.
 
-The prototype also preserves certified institutional context as temporal
+The current implementation also preserves certified institutional context as temporal
 history: it can record why an authorised concession, appeal outcome, curriculum
 applicability decision, or assessment accommodation affected a subject's
 position, while retaining the original event when a later decision supersedes
@@ -82,7 +82,7 @@ integration is required before it can influence evaluation.
 
 ## Not Yet Proven
 
-The prototype has not yet been validated against a real institution's complete,
+The implementation has not yet been validated against a real institution's complete,
 messy policy corpus. In particular:
 
 - extraction has not been verified against long, contradictory source material;

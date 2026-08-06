@@ -142,6 +142,7 @@ export function AssistanceInbox({ canManage }: { canManage: boolean }) {
                   <td className="max-w-[240px] break-words px-3 py-4 text-muted">{request.contact_details || 'Not provided'}</td>
                   <td className={`whitespace-nowrap px-3 py-4 ${request.is_overdue ? 'font-medium text-rose-700' : 'text-muted'}`}>{request.is_overdue ? 'Overdue · ' : ''}{formatDueAt(request.response_due_at)}</td>
                   <td className="px-3 py-4">
+                    {request.responsible_group && <p className={`mb-2 text-xs ${request.is_escalated ? 'font-medium text-rose-700' : 'text-muted'}`}>{request.is_escalated ? 'Escalation due: ' : 'Responsible: '}{request.is_escalated ? request.fallback_group || request.responsible_group : request.responsible_group}</p>}
                     <select
                       aria-label={`Status for request ${request.id}`}
                       value={request.status}

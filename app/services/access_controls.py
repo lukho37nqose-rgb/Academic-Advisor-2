@@ -52,6 +52,22 @@ def decision_review_response_due_at(access_settings: dict[str, object]) -> datet
     return datetime.now(timezone.utc) + timedelta(hours=value)
 
 
+def casework_routing(schema_definition: dict[str, object], *, now: datetime | None = None) -> tuple[str, str | None, datetime]:
+    """Return group-level continuity information without assuming a staff roster."""
+    routing = schema_definition.get("casework")
+    routing = routing if isinstance(routing, dict) else {}
+    primary = routing.get("primary_group")
+    fallback = routing.get("fallback_group")
+    after_hours = routing.get("escalation_after_hours", 72)
+    if not isinstance(primary, str) or not primary.strip():
+        primary = "Institutional casework team"
+    if not isinstance(fallback, str) or not fallback.strip():
+        fallback = None
+    if isinstance(after_hours, bool) or not isinstance(after_hours, int) or after_hours < 1 or after_hours > 8760:
+        after_hours = 72
+    return primary.strip(), fallback.strip() if fallback else None, (now or datetime.now(timezone.utc)) + timedelta(hours=after_hours)
+
+
 def public_client_fingerprint(request: Request) -> str:
     """Creates a non-reversible key without storing a raw IP address."""
     client_address = request.client.host if request.client else "unknown"

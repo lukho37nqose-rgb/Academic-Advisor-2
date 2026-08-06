@@ -21,6 +21,14 @@
             }
         }
     },
+    "resources": {
+        "programme": [
+            {
+                "id": "grant_global_south_2024",
+                "label": "Global South Grant Eligibility 2024"
+            }
+        ]
+    },
     "governance": {
         "metadata_quick_edits": [
             {

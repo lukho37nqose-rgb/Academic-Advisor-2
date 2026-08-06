@@ -69,7 +69,7 @@ def test_handbook_worker_resumes_after_an_abrupt_interruption(tmp_path, monkeypa
     asyncio.run(create_schema())
     app.dependency_overrides[get_current_user] = lambda: UserIdentity(
         tenant_id="tenant_assurance",
-        role=Role.RULE_AUTHOR,
+        role=Role.POLICY_EDITOR,
         user_id="author_1",
         domain_ids=["dom_assurance"],
     )

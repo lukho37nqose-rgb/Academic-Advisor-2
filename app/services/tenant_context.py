@@ -50,6 +50,13 @@ def bind_authenticated_tenant(tenant_id: str) -> None:
     _public_support_request_id.set(None)
 
 
+def bind_provider_access() -> None:
+    """Mark a request as provider-control-plane work, never as tenant access."""
+    _tenant_id.set(None)
+    _access_mode.set("provider")
+    _public_support_request_id.set(None)
+
+
 @contextmanager
 def public_support_request_scope(request_id: str) -> Iterator[None]:
     """Limits public writes to the one server-generated assistance request."""

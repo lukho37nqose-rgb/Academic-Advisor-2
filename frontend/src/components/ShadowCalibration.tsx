@@ -67,7 +67,7 @@ const findingLabels: Record<CalibrationFindingClassification, string> = {
 function errorMessage(error: unknown) {
   const maybeAxios = error as { response?: { data?: { detail?: unknown } }; message?: string };
   const detail = maybeAxios.response?.data?.detail;
-  return typeof detail === 'string' ? detail : maybeAxios.message || 'Shadow calibration could not be completed.';
+  return typeof detail === 'string' ? detail : maybeAxios.message || 'Outcome calibration could not be completed.';
 }
 
 function emptyCase(): DraftCase {
@@ -345,7 +345,7 @@ export function ShadowCalibration({
         </section>}
 
         {selectedSuite.status === 'CERTIFIED' && <section aria-labelledby="run-heading" className="border-y border-border py-6">
-          <div className="flex items-center gap-2"><Play aria-hidden="true" className="h-5 w-5 text-muted" /><h3 id="run-heading" className="text-lg font-semibold">Run shadow comparison</h3></div>
+          <div className="flex items-center gap-2"><Play aria-hidden="true" className="h-5 w-5 text-muted" /><h3 id="run-heading" className="text-lg font-semibold">Run pre-production comparison</h3></div>
           <p className="mt-2 max-w-3xl text-sm leading-relaxed text-muted">The comparison uses the signed release and the certified representative facts. It does not create or communicate an operative institutional outcome.</p>
           {canRun && <button type="button" onClick={() => void runSuite()} disabled={running} className="mt-4 inline-flex items-center gap-2 rounded bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary/90 disabled:opacity-40"><Play className="h-4 w-4" />{running ? 'Running comparison...' : 'Run comparison'}</button>}
         </section>}
@@ -380,7 +380,7 @@ export function ShadowCalibration({
 
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 py-4">
-      <section className="flex flex-wrap items-center justify-between gap-4 border-b border-border pb-5"><div className="flex items-center gap-3"><TestTube2 aria-hidden="true" className="h-5 w-5 text-muted" /><div><h2 className="text-2xl font-semibold">Shadow calibration</h2><p className="mt-1 text-sm text-muted">Compare recorded outcomes with an approved policy release before operational use.</p></div></div>{canCreate && <button type="button" onClick={() => { setShowCreate((current) => !current); resetDraft(); }} className="inline-flex items-center gap-2 rounded border border-border px-3 py-2 text-sm font-medium hover:bg-accent"><Plus className="h-4 w-4" />New suite</button>}</section>
+      <section className="flex flex-wrap items-center justify-between gap-4 border-b border-border pb-5"><div className="flex items-center gap-3"><TestTube2 aria-hidden="true" className="h-5 w-5 text-muted" /><div><h2 className="text-2xl font-semibold">Outcome calibration</h2><p className="mt-1 text-sm text-muted">Compare recorded outcomes with an approved policy release before operational use.</p></div></div>{canCreate && <button type="button" onClick={() => { setShowCreate((current) => !current); resetDraft(); }} className="inline-flex items-center gap-2 rounded border border-border px-3 py-2 text-sm font-medium hover:bg-accent"><Plus className="h-4 w-4" />New suite</button>}</section>
 
       <section className="flex flex-wrap items-end gap-4"><label className="grid gap-2 text-sm font-medium">Decision domain<select value={domainId} onChange={(event) => setDomainId(event.target.value)} className="min-w-64 rounded border border-border bg-white px-3 py-2 font-normal outline-none focus:border-primary"><option value="">Select domain</option>{domains.map((domain) => <option key={domain.domain_id} value={domain.domain_id}>{domain.domain_name}</option>)}</select></label></section>
 
@@ -395,10 +395,10 @@ export function ShadowCalibration({
         <button type="button" onClick={() => void createSuite()} disabled={creating || !canSubmitSuite} className="mt-6 inline-flex items-center gap-2 rounded bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary/90 disabled:opacity-40"><Send className="h-4 w-4" />{creating ? 'Submitting...' : 'Submit for independent certification'}</button>
       </section>}
 
-      {loading && <p className="text-sm text-muted">Loading calibration workspace...</p>}
+      {loading && <p className="text-sm text-muted">Loading outcome calibration workspace...</p>}
       {loadingSuite && <p className="text-sm text-muted">Loading calibration suite...</p>}
       {error && <div role="alert" className="flex items-start gap-2 border border-rose-200 bg-rose-50 px-3 py-3 text-sm text-rose-800"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />{error}</div>}
-      {!loading && !error && suites.length === 0 && <p className="text-sm text-muted">No shadow calibration suites have been submitted for this domain.</p>}
+      {!loading && !error && suites.length === 0 && <p className="text-sm text-muted">No outcome calibration suites have been submitted for this domain.</p>}
       {!loading && <div className="divide-y divide-border border-y border-border">{suites.map((suite) => <button key={suite.suite_id} type="button" onClick={() => void openSuite(suite.suite_id)} className="flex w-full items-center justify-between gap-4 px-1 py-4 text-left hover:bg-accent"><span><span className="block font-medium">{suite.name}</span><span className="mt-1 block text-sm text-muted">Release {suite.release_version}  |  {suite.case_count} cases  |  {dataBasisLabel(suite.data_basis)}</span></span><span className="text-sm font-medium">{suite.status}</span></button>)}</div>}
     </div>
   );

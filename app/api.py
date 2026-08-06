@@ -20,7 +20,10 @@ from app.services.auth import (
     get_current_user,
     UserIdentity,
     Role,
+    ProviderIdentity,
+    ProviderRole,
     require_role,
+    require_provider_role,
 )
 from app.infrastructure.database import get_db_session, init_db, validate_production_database_safety
 from app.infrastructure.repositories import (
@@ -47,6 +50,7 @@ from app.infrastructure.repositories import (
     QuickEditConflictError,
     PolicyAmbiguityConflictError,
     PolicyAmbiguityRepository,
+    ProviderOperationsRepository,
     ReleaseApplicabilityConflictError,
     ReleaseVersionConflictError,
     ReasoningRepository,
@@ -55,13 +59,14 @@ from app.infrastructure.repositories import (
     ShadowCalibrationRepository,
     SystemRecordImportMappingConflictError,
     SystemRecordImportMappingRepository,
+    InstitutionalDataSourceRepository,
     acquire_domain_governance_lock,
 )
 from app.core.engine import generate_reasoning_graph
-from app.core.models import RuleGraph, ReasoningGraph, EvaluationContext, Evidence, Fact, EvaluationSummary, Release
+from app.core.models import RuleGraph, ReasoningGraph, EvaluationContext, Evidence, Fact, EvaluationSummary, Release, WorkflowRule
 from app.core.compiler import compile_release_to_graph
 from app.core.operators import UnsupportedOperatorError
-from app.adapters.evidence import RawTextAdapter
+from app.adapters.evidence import RawTextAdapter, SystemRecordPayloadAdapter
 from app.adapters.system_record_import import (
     SystemRecordImportContract,
     preview_system_record_csv,
@@ -97,6 +102,8 @@ from app.services.institutional_intake import (
     InstitutionalIntakeRequest,
     build_institutional_input,
 )
+from app.services.policy_source_manifest import PolicySourceManifestError, build_policy_source_manifest
+from app.services.decision_safety import require_human_confirmation, requires_human_confirmation
 from app.services.access_controls import (
     enforce_public_support_rate_limit,
 )
@@ -119,6 +126,7 @@ from app.services.evidence_review import (
 )
 from app.sdk.pilot_rehearsal import run_pilot_rehearsal
 from app.services.ocr_provider import is_configured as ocr_provider_is_configured
+from app.services.document_safety import UnsafeDocumentError, require_pdf_signature
 from app.infrastructure.telemetry import Telemetry, reset_request_id, set_request_id
 from app.services.production_readiness import validate_production_readiness
 from app.services.http_safety import allowed_hosts, apply_security_headers, cors_origins
@@ -178,6 +186,7 @@ async def validated_system_record_import_contract(
     tenant_id: str,
     domain_id: str,
     db: AsyncSession,
+    require_approved_source: bool = True,
 ) -> SystemRecordImportContract:
     """Validate a no-code mapping against the selected domain's declared facts."""
 
@@ -204,6 +213,21 @@ async def validated_system_record_import_contract(
             status_code=422,
             detail="The mapping contains facts that are not declared for this decision domain.",
         )
+    if not require_approved_source:
+        return contract
+    if not contract.source_id:
+        raise HTTPException(status_code=422, detail="Choose an independently approved institutional data source before submitting a mapping.")
+    source = await InstitutionalDataSourceRepository(db).get(source_id=contract.source_id, tenant_id=tenant_id, domain_id=domain_id)
+    if source is None or source["status"] != "APPROVED":
+        raise HTTPException(status_code=409, detail="The selected institutional data source is not independently approved.")
+    if contract.source_system != source["display_name"]:
+        raise HTTPException(status_code=422, detail="The mapping source name must match the approved institutional data source.")
+    if source["authority_level"] == "REFERENCE":
+        raise HTTPException(status_code=422, detail="Reference sources may inform review but cannot provide decision facts.")
+    if source["authority_level"] == "AUTHORITATIVE" and contract.record_state != "confirmed":
+        raise HTTPException(status_code=422, detail="An authoritative source must use confirmed records.")
+    if source["authority_level"] == "WORKING" and contract.record_state != "provisional":
+        raise HTTPException(status_code=422, detail="A working source must use provisional records.")
     return contract
 
 
@@ -262,6 +286,20 @@ class EvidenceIngestionRequest(BaseModel):
     domain_id: str = Field(min_length=1)
     subject_id: str
     content: str = Field(min_length=1, max_length=1_000_000)
+
+
+class ProviderTenantProvisionRequest(BaseModel):
+    tenant_id: str = Field(min_length=3, max_length=120, pattern=r"^[a-zA-Z0-9_-]+$")
+    tenant_name: str = Field(min_length=2, max_length=160)
+
+
+class ProviderTenantLifecycleRequest(BaseModel):
+    lifecycle_state: Literal["PILOT", "ACTIVE", "SUSPENDED", "DECOMMISSIONED"]
+
+
+class ProviderSupportAccessRequest(BaseModel):
+    tenant_id: str = Field(min_length=3, max_length=120)
+    reason: str = Field(min_length=20, max_length=2000)
     
 class EvaluateRequest(BaseModel):
     rule_graph_id: str
@@ -320,12 +358,30 @@ class ReleaseApplicabilityCriterion(BaseModel):
         return trimmed
 
 
+class ReleaseWorkflowRuleRequest(BaseModel):
+    """A reviewed workflow intent. Delivery remains held by design."""
+
+    id: str = Field(min_length=1, max_length=120)
+    trigger_condition: Literal["overall == pass", "overall == fail"]
+    action_type: Literal["CREATE_INTERNAL_TASK", "PREPARE_NO_WRITE_EXPORT", "PREPARE_NOTIFICATION"]
+    action_payload: dict[str, str] = Field(default_factory=dict, max_length=20)
+
+    @field_validator("id")
+    @classmethod
+    def trim_workflow_id(cls, value: str) -> str:
+        trimmed = value.strip()
+        if not trimmed:
+            raise ValueError("Workflow identifier cannot be blank.")
+        return trimmed
+
+
 class ReleasePolicyRequest(BaseModel):
     draft_id: str
     version: str = Field(min_length=1, max_length=80)
     effective_from: date
     effective_until: Optional[date] = None
     applicability: list[ReleaseApplicabilityCriterion] = Field(default_factory=list, max_length=10)
+    workflows: list[ReleaseWorkflowRuleRequest] = Field(default_factory=list, max_length=20)
 
     @field_validator("version")
     @classmethod
@@ -342,6 +398,9 @@ class ReleasePolicyRequest(BaseModel):
         attributes = [criterion.attribute for criterion in self.applicability]
         if len(set(attributes)) != len(attributes):
             raise ValueError("Each applicability attribute may be supplied only once.")
+        workflow_ids = [workflow.id for workflow in self.workflows]
+        if len(set(workflow_ids)) != len(workflow_ids):
+            raise ValueError("Each workflow identifier may be supplied only once.")
         return self
 
 
@@ -350,6 +409,7 @@ class PolicyAmbiguityRequest(BaseModel):
     source_citation: str = Field(min_length=3, max_length=2000)
     question: str = Field(min_length=10, max_length=4000)
     interpretation_options: list[str] = Field(min_length=2, max_length=10)
+    affected_target_paths: list[str] = Field(default_factory=list, max_length=100)
 
     @field_validator("domain_id", "source_citation", "question")
     @classmethod
@@ -367,6 +427,16 @@ class PolicyAmbiguityRequest(BaseModel):
             raise ValueError("Interpretation options cannot be blank.")
         if len(set(cleaned)) != len(cleaned):
             raise ValueError("Interpretation options must be distinct.")
+        return cleaned
+
+    @field_validator("affected_target_paths")
+    @classmethod
+    def validate_affected_target_paths(cls, values: list[str]) -> list[str]:
+        cleaned = [value.strip() for value in values]
+        if any(not value for value in cleaned):
+            raise ValueError("Affected policy fields cannot be blank.")
+        if len(set(cleaned)) != len(cleaned):
+            raise ValueError("Affected policy fields must be distinct.")
         return cleaned
 
 
@@ -415,6 +485,55 @@ class SystemRecordImportMappingRequest(BaseModel):
         if not trimmed:
             raise ValueError("Domain identifier cannot be blank.")
         return trimmed
+
+
+class InstitutionalDataSourceRequest(BaseModel):
+    domain_id: str = Field(min_length=1)
+    display_name: str = Field(min_length=2, max_length=160)
+    source_kind: Literal["SYSTEM_OF_RECORD", "LEARNING_PLATFORM", "DEPARTMENT_RECORD", "COMMITTEE_REGISTER", "MANUAL"]
+    authority_level: Literal["AUTHORITATIVE", "WORKING", "REFERENCE"]
+    source_owner: str = Field(min_length=2, max_length=160)
+    expected_refresh_hours: int | None = Field(default=None, ge=1, le=8760)
+    source_reference: str | None = Field(default=None, max_length=500)
+    connector_kind: Literal["NONE", "REST_API", "SFTP_PULL", "DATABASE_VIEW", "VENDOR_API"] = "NONE"
+    credential_reference: str | None = Field(default=None, max_length=500)
+    endpoint_reference: str | None = Field(default=None, max_length=500)
+    allowed_object: str | None = Field(default=None, max_length=500)
+
+    @field_validator("domain_id", "display_name", "source_owner")
+    @classmethod
+    def trim_source_strings(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Source details cannot be blank.")
+        return value
+
+    @field_validator("source_reference", "credential_reference", "endpoint_reference", "allowed_object")
+    @classmethod
+    def trim_optional_source_strings(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        trimmed = value.strip()
+        return trimmed or None
+
+    @model_validator(mode="after")
+    def require_connector_references(self) -> "InstitutionalDataSourceRequest":
+        if self.connector_kind == "NONE":
+            if self.credential_reference or self.endpoint_reference or self.allowed_object:
+                raise ValueError("Connector references require a connector kind.")
+            return self
+        if not self.credential_reference or not self.endpoint_reference or not self.allowed_object:
+            raise ValueError("Read-only connectors require credential, endpoint, and allowed-object references.")
+        forbidden_fragments = ("secret=", "password=", "token=", "apikey=", "api_key=")
+        joined = " ".join([self.credential_reference, self.endpoint_reference, self.allowed_object]).lower()
+        if any(fragment in joined for fragment in forbidden_fragments):
+            raise ValueError("Connector fields must contain references, not secret values.")
+        return self
+
+
+class InstitutionalDataSourceReviewRequest(BaseModel):
+    domain_id: str = Field(min_length=1)
+    note: str | None = Field(default=None, max_length=2000)
 
 
 class SystemRecordImportMappingApprovalRequest(BaseModel):
@@ -570,6 +689,15 @@ class OCRReviewDecisionRequest(BaseModel):
     def trim_optional_review_text(cls, value: Optional[str]) -> Optional[str]:
         return value.strip() if value else value
 
+class SupersedeFactRequest(BaseModel):
+    domain_id: str = Field(min_length=1)
+    new_fact_id: str = Field(min_length=1)
+    reason: str = Field(min_length=10, max_length=2000)
+
+class DeleteEvidenceRequest(BaseModel):
+    domain_id: str = Field(min_length=1)
+    reason: str = Field(min_length=10, max_length=2000)
+
 
 def handbook_upload_max_bytes() -> int:
     raw_value = os.environ.get("HANDBOOK_UPLOAD_MAX_BYTES", str(250 * 1024 * 1024))
@@ -616,6 +744,73 @@ def handbook_source_metadata(file_name: str, content_type: str) -> tuple[str, st
 # --- Endpoints ---
 
 
+@app.get("/api/v1/provider/session")
+async def get_provider_session(
+    user: ProviderIdentity = Depends(require_provider_role([ProviderRole.PLATFORM_OPERATOR, ProviderRole.PLATFORM_AUDITOR])),
+):
+    """Provider-control-plane identity, isolated from tenant roles and claims."""
+    return {"experience": "provider", "role": user.role.value}
+
+
+@app.get("/api/v1/provider/tenants")
+async def list_provider_tenants(
+    user: ProviderIdentity = Depends(require_provider_role([ProviderRole.PLATFORM_OPERATOR, ProviderRole.PLATFORM_AUDITOR])),
+    db: AsyncSession = Depends(get_db_session),
+):
+    del user
+    return {"items": await ProviderOperationsRepository(db).list_tenants()}
+
+
+@app.post("/api/v1/provider/tenants", status_code=201)
+async def provision_provider_tenant(
+    request: ProviderTenantProvisionRequest,
+    user: ProviderIdentity = Depends(require_provider_role([ProviderRole.PLATFORM_OPERATOR])),
+    db: AsyncSession = Depends(get_db_session),
+):
+    try:
+        return await ProviderOperationsRepository(db).provision_tenant(
+            tenant_id=request.tenant_id,
+            tenant_name=request.tenant_name,
+            actor_id=user.user_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.patch("/api/v1/provider/tenants/{tenant_id}/lifecycle")
+async def update_provider_tenant_lifecycle(
+    tenant_id: str,
+    request: ProviderTenantLifecycleRequest,
+    user: ProviderIdentity = Depends(require_provider_role([ProviderRole.PLATFORM_OPERATOR])),
+    db: AsyncSession = Depends(get_db_session),
+):
+    tenant = await ProviderOperationsRepository(db).update_lifecycle(
+        tenant_id=tenant_id,
+        lifecycle_state=request.lifecycle_state,
+        actor_id=user.user_id,
+    )
+    if tenant is None:
+        raise HTTPException(status_code=404, detail="Provider tenant was not found.")
+    return tenant
+
+
+@app.post("/api/v1/provider/support-access-requests", status_code=201)
+async def request_provider_support_access(
+    request: ProviderSupportAccessRequest,
+    user: ProviderIdentity = Depends(require_provider_role([ProviderRole.PLATFORM_OPERATOR])),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Record a support request only. This endpoint grants no tenant-data access."""
+    access_request = await ProviderOperationsRepository(db).request_support_access(
+        tenant_id=request.tenant_id,
+        actor_id=user.user_id,
+        reason=request.reason,
+    )
+    if access_request is None:
+        raise HTTPException(status_code=404, detail="Provider tenant was not found.")
+    return access_request
+
+
 @app.get("/api/v1/session/capabilities")
 async def get_session_capabilities(
     user: UserIdentity = Depends(get_current_user),
@@ -626,7 +821,7 @@ async def get_session_capabilities(
 @app.post("/api/v1/evidence", status_code=201)
 async def ingest_evidence(
     request: EvidenceIngestionRequest,
-    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.SUBJECT])),
+    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.STAFF_MEMBER, Role.SUBJECT])),
     db: AsyncSession = Depends(get_db_session)
 ):
     """
@@ -664,13 +859,37 @@ async def ingest_evidence(
             detail="Evidence ingestion is temporarily unavailable.",
         ) from exc
 
+@app.delete("/api/v1/evidence/{evidence_id}", status_code=204)
+async def delete_evidence(
+    evidence_id: str,
+    request: DeleteEvidenceRequest,
+    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.STAFF_MEMBER])),
+    db: AsyncSession = Depends(get_db_session)
+):
+    """Withdraw evidence from future use by appending an audit event.
+
+    This endpoint does not destroy the preserved source object. Retention or legal
+    deletion is a separately governed institutional operation.
+    """
+    ensure_domain_access(user, request.domain_id)
+    repo = EvidenceRepository(db)
+    success = await repo.delete_evidence(
+        evidence_id=evidence_id,
+        tenant_id=user.tenant_id,
+        domain_id=request.domain_id,
+        actor_id=user.user_id,
+        reason=request.reason
+    )
+    if not success:
+        raise HTTPException(status_code=404, detail="Evidence not found or already deleted.")
+    return None
 
 @app.post("/api/v1/governance/evidence-fact-proposals", status_code=201)
 async def create_evidence_fact_proposal(
     request: EvidenceFactProposalInput,
     user: UserIdentity = Depends(require_role([
         Role.TENANT_ADMIN,
-        Role.INSTITUTIONAL_RECORDS_STEWARD,
+        Role.STAFF_MEMBER,
     ])),
     db: AsyncSession = Depends(get_db_session),
 ):
@@ -733,8 +952,8 @@ async def list_evidence_fact_proposals(
     evidence_id: str = Query(min_length=1, max_length=160),
     user: UserIdentity = Depends(require_role([
         Role.TENANT_ADMIN,
-        Role.INSTITUTIONAL_RECORDS_STEWARD,
-        Role.POLICY_OWNER,
+        Role.STAFF_MEMBER,
+        Role.APPROVER,
         Role.AUDITOR,
     ])),
     db: AsyncSession = Depends(get_db_session),
@@ -761,8 +980,8 @@ async def list_subject_evidence_for_fact_review(
     subject_id: str = Query(min_length=1, max_length=160),
     user: UserIdentity = Depends(require_role([
         Role.TENANT_ADMIN,
-        Role.INSTITUTIONAL_RECORDS_STEWARD,
-        Role.POLICY_OWNER,
+        Role.STAFF_MEMBER,
+        Role.APPROVER,
         Role.AUDITOR,
     ])),
     db: AsyncSession = Depends(get_db_session),
@@ -782,7 +1001,7 @@ async def list_subject_evidence_for_fact_review(
 async def attest_evidence_fact_proposal(
     proposal_id: str,
     request: EvidenceFactProposalAttestationRequest,
-    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.POLICY_OWNER])),
+    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.APPROVER])),
     db: AsyncSession = Depends(get_db_session),
 ):
     """Independently accept or reject a fact; accepting one's own proposal is forbidden."""
@@ -801,6 +1020,33 @@ async def attest_evidence_fact_proposal(
     if proposal is None:
         raise HTTPException(status_code=404, detail="Evidence fact proposal was not found.")
     return proposal
+
+@app.post("/api/v1/governance/facts/{old_fact_id}/supersede", status_code=200)
+async def supersede_fact(
+    old_fact_id: str,
+    request: SupersedeFactRequest,
+    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.APPROVER])),
+    db: AsyncSession = Depends(get_db_session)
+):
+    """Append a historical relationship between facts in one existing trace.
+
+    It does not alter accepted evidence proposals, an original decision, or any
+    future evaluation. A correction requires a new independently accepted fact
+    proposal and a new evaluation.
+    """
+    ensure_domain_access(user, request.domain_id)
+    repo = ReasoningRepository(db)
+    success = await repo.supersede_fact(
+        old_fact_id=old_fact_id,
+        new_fact_id=request.new_fact_id,
+        tenant_id=user.tenant_id,
+        domain_id=request.domain_id,
+        actor_id=user.user_id,
+        reason=request.reason
+    )
+    if not success:
+        raise HTTPException(status_code=404, detail="Fact not found or already superseded.")
+    return {"status": "superseded", "old_fact_id": old_fact_id, "new_fact_id": request.new_fact_id}
 
 @app.post("/api/v1/evaluate", status_code=202)
 async def start_evaluation(
@@ -937,6 +1183,16 @@ async def start_evaluation(
         # Verify the bytes before decision time. The database hash is not merely
         # an audit annotation; an altered source must fail closed.
         evidence = stored_evidence.evidence
+        # The decision preserves what kind of record it was based on and the
+        # source's own effective time. This is explanation metadata only: it
+        # never alters the deterministic rule result.
+        context = context.model_copy(update={
+            "source_authority": evidence.source_authority,
+            "record_state": evidence.record_state,
+            "source_system": evidence.source_system,
+            "source_record_version": evidence.source_record_version,
+            "source_as_of": evidence.source_as_of,
+        })
         if not evidence.storage_key:
             raise HTTPException(status_code=404, detail="Evidence not found or missing storage key.")
         try:
@@ -962,9 +1218,17 @@ async def start_evaluation(
                 status_code=409,
                 detail="Evaluation requires independently accepted facts for the preserved evidence.",
             )
+
+        domain_schema = await InstitutionalInputRepository(db).get_domain_schema(
+            tenant_id=user.tenant_id, domain_id=request.domain_id,
+        )
+        if domain_schema is None:
+            raise HTTPException(status_code=404, detail="Decision domain was not found.")
         
         # Execute Engine
         reasoning_graph = generate_reasoning_graph(context, rule_graph, facts)
+        if requires_human_confirmation(domain_schema):
+            require_human_confirmation(reasoning_graph)
         
         # Extract Decision
         final_node = next((n for n in reasoning_graph.nodes.values() if n.type == "conclusion"), None)
@@ -997,6 +1261,7 @@ async def start_evaluation(
             evidence_id=evidence.id,
             claims=claims,
             facts=facts,
+            release=release,
         )
         
         summary = EvaluationSummary(
@@ -1022,7 +1287,7 @@ async def get_reasoning_graph(
     user: UserIdentity = Depends(require_role([
         Role.SUBJECT,
         Role.TENANT_ADMIN,
-        Role.ASSISTANCE_COORDINATOR,
+        Role.STAFF_MEMBER,
         Role.AUDITOR,
     ])),
     db: AsyncSession = Depends(get_db_session)
@@ -1047,7 +1312,7 @@ async def get_reasoning_graph(
 @app.post("/api/v1/governance/drafts", status_code=201)
 async def create_draft_policy(
     request: DraftPolicyRequest,
-    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.RULE_AUTHOR])),
+    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.POLICY_EDITOR])),
     db: AsyncSession = Depends(get_db_session)
 ):
     """
@@ -1083,7 +1348,7 @@ async def create_draft_policy(
 @app.post("/api/v1/admin/institutional-inputs/domains", status_code=201)
 async def create_institutional_domain_input(
     request: InstitutionalIntakeRequest,
-    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN])),
+    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.POLICY_EDITOR])),
     db: AsyncSession = Depends(get_db_session),
 ):
     """
@@ -1134,7 +1399,7 @@ async def create_institutional_domain_input(
 async def list_pending_policy_reviews(
     user: UserIdentity = Depends(require_role([
         Role.TENANT_ADMIN,
-        Role.RULE_APPROVER,
+        Role.APPROVER,
         Role.AUDITOR,
     ])),
     db: AsyncSession = Depends(get_db_session),
@@ -1154,7 +1419,7 @@ async def get_pending_policy_review(
     draft_id: str,
     user: UserIdentity = Depends(require_role([
         Role.TENANT_ADMIN,
-        Role.RULE_APPROVER,
+        Role.APPROVER,
         Role.AUDITOR,
     ])),
     db: AsyncSession = Depends(get_db_session),
@@ -1174,12 +1439,9 @@ async def get_pending_policy_review(
 async def list_admin_domains(
     user: UserIdentity = Depends(require_role([
         Role.TENANT_ADMIN,
-        Role.METADATA_STEWARD,
-        Role.INSTITUTIONAL_RECORDS_STEWARD,
-        Role.ASSISTANCE_COORDINATOR,
-        Role.RULE_AUTHOR,
-        Role.RULE_APPROVER,
-        Role.POLICY_OWNER,
+        Role.STAFF_MEMBER,
+        Role.POLICY_EDITOR,
+        Role.APPROVER,
         Role.AUDITOR,
     ])),
     db: AsyncSession = Depends(get_db_session),
@@ -1197,7 +1459,7 @@ async def list_admin_domains(
 @app.get("/api/v1/admin/domains/{domain_id}/record-import-fields")
 async def list_record_import_fields(
     domain_id: str,
-    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.RULE_AUTHOR])),
+    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.POLICY_EDITOR])),
     db: AsyncSession = Depends(get_db_session),
 ):
     """Returns only schema-approved, labelled destinations for a CSV mapping."""
@@ -1217,8 +1479,8 @@ async def list_fact_review_fields(
     domain_id: str,
     user: UserIdentity = Depends(require_role([
         Role.TENANT_ADMIN,
-        Role.INSTITUTIONAL_RECORDS_STEWARD,
-        Role.POLICY_OWNER,
+        Role.STAFF_MEMBER,
+        Role.APPROVER,
         Role.AUDITOR,
     ])),
     db: AsyncSession = Depends(get_db_session),
@@ -1261,10 +1523,9 @@ async def list_calibration_releases(
     domain_id: str,
     user: UserIdentity = Depends(require_role([
         Role.TENANT_ADMIN,
-        Role.INSTITUTIONAL_RECORDS_STEWARD,
-        Role.RULE_AUTHOR,
-        Role.RULE_APPROVER,
-        Role.POLICY_OWNER,
+        Role.STAFF_MEMBER,
+        Role.POLICY_EDITOR,
+        Role.APPROVER,
         Role.AUDITOR,
     ])),
     db: AsyncSession = Depends(get_db_session),
@@ -1290,7 +1551,7 @@ async def list_calibration_releases(
 @app.post("/api/v1/governance/shadow-calibrations", status_code=201)
 async def create_shadow_calibration(
     request: ShadowCalibrationSuiteInput,
-    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.RULE_AUTHOR])),
+    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.POLICY_EDITOR])),
     db: AsyncSession = Depends(get_db_session),
 ):
     """Submits immutable representative cases for independent shadow calibration."""
@@ -1355,9 +1616,8 @@ async def list_shadow_calibrations(
     domain_id: str,
     user: UserIdentity = Depends(require_role([
         Role.TENANT_ADMIN,
-        Role.RULE_AUTHOR,
-        Role.RULE_APPROVER,
-        Role.POLICY_OWNER,
+        Role.POLICY_EDITOR,
+        Role.APPROVER,
         Role.AUDITOR,
     ])),
     db: AsyncSession = Depends(get_db_session),
@@ -1377,9 +1637,8 @@ async def get_shadow_calibration(
     domain_id: str,
     user: UserIdentity = Depends(require_role([
         Role.TENANT_ADMIN,
-        Role.RULE_AUTHOR,
-        Role.RULE_APPROVER,
-        Role.POLICY_OWNER,
+        Role.POLICY_EDITOR,
+        Role.APPROVER,
         Role.AUDITOR,
     ])),
     db: AsyncSession = Depends(get_db_session),
@@ -1399,7 +1658,7 @@ async def get_shadow_calibration(
 async def certify_shadow_calibration(
     suite_id: str,
     request: ShadowCalibrationCertificationRequest,
-    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.RULE_APPROVER, Role.POLICY_OWNER])),
+    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.APPROVER])),
     db: AsyncSession = Depends(get_db_session),
 ):
     """Requires an independent institutional role to certify the comparison inputs."""
@@ -1425,9 +1684,8 @@ async def run_shadow_calibration(
     request: ShadowCalibrationRunRequest,
     user: UserIdentity = Depends(require_role([
         Role.TENANT_ADMIN,
-        Role.RULE_AUTHOR,
-        Role.RULE_APPROVER,
-        Role.POLICY_OWNER,
+        Role.POLICY_EDITOR,
+        Role.APPROVER,
     ])),
     db: AsyncSession = Depends(get_db_session),
 ):
@@ -1481,7 +1739,7 @@ async def run_shadow_calibration(
 async def resolve_shadow_calibration_finding(
     finding_id: str,
     request: ShadowCalibrationFindingResolutionRequest,
-    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.POLICY_OWNER, Role.RULE_APPROVER])),
+    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.APPROVER])),
     db: AsyncSession = Depends(get_db_session),
 ):
     """Classifies a mismatch without changing its source case, release, or report."""
@@ -1507,7 +1765,7 @@ async def create_institutional_context_event(
     request: InstitutionalContextEventInput,
     user: UserIdentity = Depends(require_role([
         Role.TENANT_ADMIN,
-        Role.INSTITUTIONAL_RECORDS_STEWARD,
+        Role.STAFF_MEMBER,
     ])),
     db: AsyncSession = Depends(get_db_session),
 ):
@@ -1564,9 +1822,9 @@ async def get_staff_institutional_timeline(
     domain_id: str,
     user: UserIdentity = Depends(require_role([
         Role.TENANT_ADMIN,
-        Role.INSTITUTIONAL_RECORDS_STEWARD,
-        Role.POLICY_OWNER,
-        Role.ASSISTANCE_COORDINATOR,
+        Role.STAFF_MEMBER,
+        Role.APPROVER,
+        Role.STAFF_MEMBER,
         Role.AUDITOR,
     ])),
     db: AsyncSession = Depends(get_db_session),
@@ -1587,7 +1845,7 @@ async def get_staff_institutional_timeline(
 async def attest_institutional_context_event(
     event_id: str,
     request: InstitutionalContextAttestationRequest,
-    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.POLICY_OWNER])),
+    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.APPROVER])),
     db: AsyncSession = Depends(get_db_session),
 ):
     """Certifies or rejects a recorded institutional decision without rewriting it."""
@@ -1631,18 +1889,18 @@ async def preview_system_record_import(
     domain_id: str = Form(...),
     contract_json: str = Form(...),
     file: UploadFile = File(...),
-    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.RULE_AUTHOR])),
+    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.POLICY_EDITOR])),
     db: AsyncSession = Depends(get_db_session),
 ):
-    """Validate a one-way CSV export without persisting it or calling its source."""
+    """Validate a file-based source-record fallback without persisting it or calling its source."""
 
     ensure_domain_access(user, domain_id)
     if not file.filename or not file.filename.lower().endswith(".csv"):
-        raise HTTPException(status_code=422, detail="A CSV export file is required.")
+        raise HTTPException(status_code=422, detail="A source record file is required.")
     maximum_bytes = system_record_import_max_bytes()
     content = await file.read(maximum_bytes + 1)
     if len(content) > maximum_bytes:
-        raise HTTPException(status_code=413, detail="CSV exceeds the server preview size limit.")
+        raise HTTPException(status_code=413, detail="Source record file exceeds the server preview size limit.")
     try:
         raw_contract = json.loads(contract_json)
         if not isinstance(raw_contract, dict):
@@ -1654,14 +1912,72 @@ async def preview_system_record_import(
         tenant_id=user.tenant_id,
         domain_id=domain_id,
         db=db,
+        require_approved_source=False,
     )
     return preview_system_record_csv(content, contract)
+
+
+@app.get("/api/v1/admin/institutional-data-sources")
+async def list_institutional_data_sources(
+    domain_id: str,
+    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.POLICY_EDITOR, Role.APPROVER, Role.STAFF_MEMBER, Role.AUDITOR])),
+    db: AsyncSession = Depends(get_db_session),
+):
+    ensure_domain_access(user, domain_id)
+    return {"items": await InstitutionalDataSourceRepository(db).list_for_domain(tenant_id=user.tenant_id, domain_id=domain_id)}
+
+
+@app.post("/api/v1/admin/institutional-data-sources", status_code=201)
+async def submit_institutional_data_source(
+    request: InstitutionalDataSourceRequest,
+    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.POLICY_EDITOR])),
+    db: AsyncSession = Depends(get_db_session),
+):
+    ensure_domain_access(user, request.domain_id)
+    return await InstitutionalDataSourceRepository(db).create(
+        source_id="source_" + uuid.uuid4().hex, tenant_id=user.tenant_id, domain_id=request.domain_id, author_id=user.user_id,
+        display_name=request.display_name, source_kind=request.source_kind, authority_level=request.authority_level,
+        source_owner=request.source_owner, expected_refresh_hours=request.expected_refresh_hours, source_reference=request.source_reference,
+        connector_kind=request.connector_kind, credential_reference=request.credential_reference,
+        endpoint_reference=request.endpoint_reference, allowed_object=request.allowed_object,
+        connector_status="CONFIGURED" if request.connector_kind != "NONE" else "NOT_CONFIGURED",
+    )
+
+
+@app.post("/api/v1/admin/institutional-data-sources/{source_id}/approve")
+async def approve_institutional_data_source(
+    source_id: str, request: InstitutionalDataSourceReviewRequest,
+    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.APPROVER])), db: AsyncSession = Depends(get_db_session),
+):
+    ensure_domain_access(user, request.domain_id)
+    try:
+        source = await InstitutionalDataSourceRepository(db).review(source_id=source_id, tenant_id=user.tenant_id, domain_id=request.domain_id, reviewer_id=user.user_id, approved=True, note=request.note)
+    except SystemRecordImportMappingConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if source is None:
+        raise HTTPException(status_code=404, detail="Institutional data source was not found.")
+    return source
+
+
+@app.post("/api/v1/admin/institutional-data-sources/{source_id}/reject")
+async def reject_institutional_data_source(
+    source_id: str, request: InstitutionalDataSourceReviewRequest,
+    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.APPROVER])), db: AsyncSession = Depends(get_db_session),
+):
+    ensure_domain_access(user, request.domain_id)
+    try:
+        source = await InstitutionalDataSourceRepository(db).review(source_id=source_id, tenant_id=user.tenant_id, domain_id=request.domain_id, reviewer_id=user.user_id, approved=False, note=request.note)
+    except SystemRecordImportMappingConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if source is None:
+        raise HTTPException(status_code=404, detail="Institutional data source was not found.")
+    return source
 
 
 @app.post("/api/v1/admin/system-record-import-mappings", status_code=201)
 async def submit_system_record_import_mapping(
     request: SystemRecordImportMappingRequest,
-    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.RULE_AUTHOR])),
+    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.POLICY_EDITOR])),
     db: AsyncSession = Depends(get_db_session),
 ):
     """Submit a reusable CSV mapping for review, retaining configuration only."""
@@ -1684,6 +2000,7 @@ async def submit_system_record_import_mapping(
             domain_id=request.domain_id,
             mapping_name=contract.mapping_id,
             source_system=contract.source_system,
+            source_id=contract.source_id,
             contract=contract_document,
             contract_sha256=contract_sha256,
             author_id=user.user_id,
@@ -1692,14 +2009,120 @@ async def submit_system_record_import_mapping(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
+@app.post("/api/v1/admin/system-record-imports/materialize", status_code=201)
+async def materialize_system_record_import(
+    domain_id: str = Form(...),
+    mapping_id: str = Form(...),
+    file: UploadFile = File(...),
+    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.STAFF_MEMBER])),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Materialise an approved export without writing to its source system.
+
+    Confirmed records from an independently approved mapping inherit that
+    mapping's review as their acceptance authority. Provisional records remain
+    held evidence and require ordinary independent fact review.
+    """
+    ensure_domain_access(user, domain_id)
+    if not file.filename or not file.filename.lower().endswith(".csv"):
+        raise HTTPException(status_code=422, detail="A source record file is required.")
+    mapping = await SystemRecordImportMappingRepository(db).get(
+        mapping_id=mapping_id,
+        tenant_id=user.tenant_id,
+        domain_id=domain_id,
+    )
+    if mapping is None:
+        raise HTTPException(status_code=404, detail="System-record import mapping was not found.")
+    if mapping["status"] != "APPROVED":
+        raise HTTPException(status_code=409, detail="Only an independently approved mapping may import records.")
+    if not mapping.get("source_id"):
+        raise HTTPException(status_code=409, detail="This legacy mapping is not linked to an approved institutional data source.")
+    source = await InstitutionalDataSourceRepository(db).get(source_id=cast(str, mapping["source_id"]), tenant_id=user.tenant_id, domain_id=domain_id)
+    if source is None or source["status"] != "APPROVED":
+        raise HTTPException(status_code=409, detail="The linked institutional data source is no longer approved.")
+    try:
+        contract = SystemRecordImportContract.model_validate(mapping["contract"])
+    except ValidationError as exc:
+        raise HTTPException(status_code=409, detail="The approved mapping is no longer valid.") from exc
+    maximum_bytes = system_record_import_max_bytes()
+    content = await file.read(maximum_bytes + 1)
+    if len(content) > maximum_bytes:
+        raise HTTPException(status_code=413, detail="Source record file exceeds the server import size limit.")
+    preview = preview_system_record_csv(content, contract)
+    try:
+        records = preview.require_valid_records()
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="The export contains validation issues and was not imported.") from exc
+
+    evidence_repository = EvidenceRepository(db)
+    fact_repository = EvidenceFactProposalRepository(db)
+    adapter = SystemRecordPayloadAdapter()
+    created = 0
+    already_imported = 0
+    for record in records:
+        payload = record.evidence_payload(contract)
+        payload["approved_mapping_id"] = mapping_id
+        evidence = await adapter.ingest(
+            tenant_id=user.tenant_id,
+            subject_id=record.subject_id,
+            raw_payload=payload,
+        )
+        source_as_of = (
+            datetime.combine(record.source_as_of_date, datetime.min.time(), tzinfo=timezone.utc)
+            if record.source_as_of_date else None
+        )
+        evidence = evidence.model_copy(update={
+            "source_authority": "official_system",
+            "record_state": contract.record_state,
+            "source_system": contract.source_system,
+            "source_record_version": record.source_record_version,
+            "source_as_of": source_as_of,
+        })
+        if await evidence_repository.create_system_record_evidence(
+            evidence,
+            tenant_id=user.tenant_id,
+            domain_id=domain_id,
+            mapping_id=mapping_id,
+            record_fingerprint=record.fingerprint_sha256,
+        ):
+            created += 1
+            if contract.record_state == "confirmed":
+                await fact_repository.accept_confirmed_system_record(
+                    tenant_id=user.tenant_id,
+                    domain_id=domain_id,
+                    evidence=evidence,
+                    mapping_id=mapping_id,
+                    mapping_reviewer_id=cast(str, mapping["reviewed_by"]),
+                    values=record.values,
+                    source_system=contract.source_system,
+                    source_record_version=record.source_record_version,
+                )
+        else:
+            already_imported += 1
+    return {
+        "mapping_id": mapping_id,
+        "source_system": contract.source_system,
+        "record_state": contract.record_state,
+        "accepted_record_count": len(records),
+        "evidence_created": created,
+        "already_imported": already_imported,
+        "fact_acceptance": (
+            "Confirmed records were accepted through the independently approved mapping."
+            if contract.record_state == "confirmed"
+            else "Provisional records remain held evidence and require independent fact review."
+        ),
+    }
+
+
 @app.get("/api/v1/admin/system-record-import-mappings")
 async def list_system_record_import_mappings(
     domain_id: str,
     status: Optional[Literal["PENDING", "APPROVED", "REJECTED"]] = None,
     user: UserIdentity = Depends(require_role([
         Role.TENANT_ADMIN,
-        Role.RULE_AUTHOR,
-        Role.RULE_APPROVER,
+        Role.POLICY_EDITOR,
+        Role.APPROVER,
+        Role.STAFF_MEMBER,
         Role.AUDITOR,
     ])),
     db: AsyncSession = Depends(get_db_session),
@@ -1713,8 +2136,9 @@ async def list_system_record_import_mappings(
             domain_id=domain_id,
             status=status,
         ),
-        "can_submit": user.role in {Role.TENANT_ADMIN, Role.RULE_AUTHOR},
-        "can_review": user.role in {Role.TENANT_ADMIN, Role.RULE_APPROVER},
+        "can_submit": user.role in {Role.TENANT_ADMIN, Role.POLICY_EDITOR},
+        "can_review": user.role in {Role.TENANT_ADMIN, Role.APPROVER},
+        "can_materialize": user.role in {Role.TENANT_ADMIN, Role.STAFF_MEMBER},
     }
 
 
@@ -1724,8 +2148,8 @@ async def get_system_record_import_mapping_history(
     domain_id: str,
     user: UserIdentity = Depends(require_role([
         Role.TENANT_ADMIN,
-        Role.RULE_AUTHOR,
-        Role.RULE_APPROVER,
+        Role.POLICY_EDITOR,
+        Role.APPROVER,
         Role.AUDITOR,
     ])),
     db: AsyncSession = Depends(get_db_session),
@@ -1747,7 +2171,7 @@ async def get_system_record_import_mapping_history(
 async def approve_system_record_import_mapping(
     mapping_id: str,
     request: SystemRecordImportMappingApprovalRequest,
-    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.RULE_APPROVER])),
+    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.APPROVER])),
     db: AsyncSession = Depends(get_db_session),
 ):
     """Approve an immutable configuration; authors cannot approve their own work."""
@@ -1773,7 +2197,7 @@ async def approve_system_record_import_mapping(
 async def reject_system_record_import_mapping(
     mapping_id: str,
     request: SystemRecordImportMappingRejectionRequest,
-    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.RULE_APPROVER])),
+    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.APPROVER])),
     db: AsyncSession = Depends(get_db_session),
 ):
     """Reject a mapping with an auditable reason; it cannot be edited in place."""
@@ -1798,7 +2222,7 @@ async def reject_system_record_import_mapping(
 @app.post("/api/v1/governance/handbook-upload-sessions", status_code=201)
 async def create_handbook_upload_session(
     request: HandbookUploadSessionRequest,
-    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.RULE_AUTHOR])),
+    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.POLICY_EDITOR])),
     db: AsyncSession = Depends(get_db_session),
 ):
     """Issues a constrained direct-upload contract without queuing a policy change."""
@@ -1842,7 +2266,7 @@ async def create_handbook_upload_session(
 @app.post("/api/v1/governance/handbook-upload-sessions/{session_id}/complete", status_code=201)
 async def complete_handbook_upload_session(
     session_id: str,
-    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.RULE_AUTHOR])),
+    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.POLICY_EDITOR])),
     db: AsyncSession = Depends(get_db_session),
 ):
     """Queues an object only after its storage metadata matches the upload session."""
@@ -1855,6 +2279,11 @@ async def complete_handbook_upload_session(
             raise HTTPException(status_code=422, detail="Uploaded handbook size does not match the approved upload session.")
         if metadata["content_type"] not in {upload_session.content_type, "application/x-pdf"}:
             raise HTTPException(status_code=422, detail="Uploaded handbook type does not match the approved upload session.")
+        async for chunk in BlobStorage.get_stream(cast(str, upload_session.storage_key)):
+            require_pdf_signature(chunk)
+            break
+        else:
+            raise UnsafeDocumentError("The handbook upload is empty.")
         upload = await repository.complete_upload_session(
             upload_session,
             handbook_id=f"handbook_{uuid.uuid4().hex}",
@@ -1873,7 +2302,7 @@ async def complete_handbook_upload_session(
 async def upload_handbook(
     domain_id: str = Form(...),
     file: UploadFile = File(...),
-    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.RULE_AUTHOR])),
+    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.POLICY_EDITOR])),
     db: AsyncSession = Depends(get_db_session),
 ):
     """Queues a verified PDF source; extraction happens only in a worker."""
@@ -1895,6 +2324,9 @@ async def upload_handbook(
             source_file.write(chunk)
         if total_size == 0:
             raise HTTPException(status_code=422, detail="Handbook upload is empty.")
+        source_file.seek(0)
+        require_pdf_signature(source_file.read(8))
+        source_file.seek(0)
         content_hash = source_hash.hexdigest()
         storage_key = await BlobStorage.upload_binary(
             source_file,
@@ -1916,6 +2348,8 @@ async def upload_handbook(
             storage_key=storage_key,
             uploaded_by=user.user_id,
         )
+    except UnsafeDocumentError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except HandbookUploadConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
     return {
@@ -1928,8 +2362,8 @@ async def upload_handbook(
 async def list_handbook_uploads(
     user: UserIdentity = Depends(require_role([
         Role.TENANT_ADMIN,
-        Role.RULE_AUTHOR,
-        Role.RULE_APPROVER,
+        Role.POLICY_EDITOR,
+        Role.APPROVER,
         Role.AUDITOR,
     ])),
     db: AsyncSession = Depends(get_db_session),
@@ -1969,8 +2403,8 @@ async def list_handbook_pages(
     limit: int = Query(default=10, ge=1, le=25),
     user: UserIdentity = Depends(require_role([
         Role.TENANT_ADMIN,
-        Role.RULE_AUTHOR,
-        Role.RULE_APPROVER,
+        Role.POLICY_EDITOR,
+        Role.APPROVER,
         Role.AUDITOR,
     ])),
     db: AsyncSession = Depends(get_db_session),
@@ -1999,7 +2433,7 @@ async def list_handbook_pages(
 @app.post("/api/v1/governance/handbooks/{handbook_id}/ocr", status_code=202)
 async def request_handbook_ocr(
     handbook_id: str,
-    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.RULE_AUTHOR])),
+    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.POLICY_EDITOR])),
     db: AsyncSession = Depends(get_db_session),
 ):
     """Queues OCR proposals only for pages already held for manual review."""
@@ -2026,8 +2460,8 @@ async def list_handbook_ocr_reviews(
     handbook_id: str,
     user: UserIdentity = Depends(require_role([
         Role.TENANT_ADMIN,
-        Role.RULE_AUTHOR,
-        Role.RULE_APPROVER,
+        Role.POLICY_EDITOR,
+        Role.APPROVER,
         Role.AUDITOR,
     ])),
     db: AsyncSession = Depends(get_db_session),
@@ -2045,7 +2479,7 @@ async def review_handbook_ocr(
     handbook_id: str,
     page_number: int,
     request: OCRReviewDecisionRequest,
-    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.RULE_AUTHOR])),
+    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.POLICY_EDITOR])),
     db: AsyncSession = Depends(get_db_session),
 ):
     """Promotes one reviewed OCR proposal to page text or rejects it with an audit event."""
@@ -2119,7 +2553,7 @@ async def list_support_requests(
     user: UserIdentity = Depends(require_role([
         Role.TENANT_ADMIN,
         Role.AUDITOR,
-        Role.ASSISTANCE_COORDINATOR,
+        Role.STAFF_MEMBER,
     ])),
     db: AsyncSession = Depends(get_db_session),
 ):
@@ -2139,7 +2573,7 @@ async def update_support_request_status(
     update: SupportRequestStatusUpdate,
     user: UserIdentity = Depends(require_role([
         Role.TENANT_ADMIN,
-        Role.ASSISTANCE_COORDINATOR,
+        Role.STAFF_MEMBER,
     ])),
     db: AsyncSession = Depends(get_db_session),
 ):
@@ -2164,7 +2598,7 @@ async def list_support_request_history(
     user: UserIdentity = Depends(require_role([
         Role.TENANT_ADMIN,
         Role.AUDITOR,
-        Role.ASSISTANCE_COORDINATOR,
+        Role.STAFF_MEMBER,
     ])),
     db: AsyncSession = Depends(get_db_session),
 ):
@@ -2178,6 +2612,23 @@ async def list_support_request_history(
     if events is None:
         raise HTTPException(status_code=404, detail="Assistance request was not found.")
     return {"items": events}
+
+
+@app.get("/api/v1/subject/current-positions")
+async def list_subject_current_positions(
+    user: UserIdentity = Depends(require_role([Role.SUBJECT])),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """List the subject's latest engine-evaluated position per decision domain."""
+    if not user.subject_id:
+        raise HTTPException(status_code=401, detail="Subject identity is missing from the access token.")
+    positions = await ReasoningRepository(db).list_subject_current_positions(
+        tenant_id=user.tenant_id,
+        subject_id=user.subject_id,
+    )
+    # Defence in depth: a subject token must never discover an unassigned domain.
+    positions = [position for position in positions if position["domain_id"] in user.domain_ids]
+    return {"items": positions}
 
 
 @app.post("/api/v1/decision-reviews", status_code=201)
@@ -2237,7 +2688,7 @@ async def list_decision_reviews(
     user: UserIdentity = Depends(require_role([
         Role.SUBJECT,
         Role.TENANT_ADMIN,
-        Role.ASSISTANCE_COORDINATOR,
+        Role.STAFF_MEMBER,
     ])),
     db: AsyncSession = Depends(get_db_session),
 ):
@@ -2275,7 +2726,7 @@ async def get_decision_review(
     user: UserIdentity = Depends(require_role([
         Role.SUBJECT,
         Role.TENANT_ADMIN,
-        Role.ASSISTANCE_COORDINATOR,
+        Role.STAFF_MEMBER,
     ])),
     db: AsyncSession = Depends(get_db_session),
 ):
@@ -2295,7 +2746,7 @@ async def get_decision_review_history(
     user: UserIdentity = Depends(require_role([
         Role.SUBJECT,
         Role.TENANT_ADMIN,
-        Role.ASSISTANCE_COORDINATOR,
+        Role.STAFF_MEMBER,
     ])),
     db: AsyncSession = Depends(get_db_session),
 ):
@@ -2314,7 +2765,7 @@ async def update_decision_review(
     update: DecisionReviewCaseUpdate,
     user: UserIdentity = Depends(require_role([
         Role.TENANT_ADMIN,
-        Role.ASSISTANCE_COORDINATOR,
+        Role.STAFF_MEMBER,
     ])),
     db: AsyncSession = Depends(get_db_session),
 ):
@@ -2341,7 +2792,7 @@ async def get_admin_permissions(
     domain_id: str,
     user: UserIdentity = Depends(require_role([
         Role.TENANT_ADMIN,
-        Role.METADATA_STEWARD,
+        Role.STAFF_MEMBER,
         Role.AUDITOR,
     ])),
     registry: EdgeRegistry = Depends(get_edge_registry),
@@ -2372,7 +2823,7 @@ async def get_admin_permissions(
 @app.post("/api/v1/admin/quick-edit", status_code=201)
 async def apply_quick_edit(
     request: QuickEditRequest,
-    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.METADATA_STEWARD])),
+    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.STAFF_MEMBER])),
     db: AsyncSession = Depends(get_db_session),
     registry: EdgeRegistry = Depends(get_edge_registry),
 ):
@@ -2394,6 +2845,14 @@ async def apply_quick_edit(
             detail=(
                 f"{request.target_type}.{request.field} is not configured as a "
                 "low-risk metadata quick edit for this domain."
+            ),
+        )
+    if not registry.target_exists(user.tenant_id, request.domain_id, request.target_type, request.target_id):
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"{request.target_type} target '{request.target_id}' is not in this domain's approved "
+                "metadata catalogue."
             ),
         )
 
@@ -2424,7 +2883,7 @@ async def apply_quick_edit(
 @app.post("/api/v1/admin/quick-edits", status_code=201)
 async def apply_quick_edit_plural(
     request: QuickEditRequest,
-    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.METADATA_STEWARD])),
+    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.STAFF_MEMBER])),
     db: AsyncSession = Depends(get_db_session),
     registry: EdgeRegistry = Depends(get_edge_registry),
 ):
@@ -2436,7 +2895,7 @@ async def list_quick_edit_audit_log(
     domain_id: str,
     target_id: Optional[str] = None,
     limit: int = 50,
-    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.METADATA_STEWARD, Role.AUDITOR])),
+    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.STAFF_MEMBER, Role.AUDITOR])),
     db: AsyncSession = Depends(get_db_session)
 ):
     """
@@ -2458,7 +2917,7 @@ async def list_quick_edit_audit_log(
 async def list_metadata_overrides(
     domain_id: str,
     target_id: Optional[str] = None,
-    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.METADATA_STEWARD, Role.AUDITOR])),
+    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.STAFF_MEMBER, Role.AUDITOR])),
     db: AsyncSession = Depends(get_db_session)
 ):
     """
@@ -2479,8 +2938,8 @@ async def raise_policy_ambiguity(
     request: PolicyAmbiguityRequest,
     user: UserIdentity = Depends(require_role([
         Role.TENANT_ADMIN,
-        Role.RULE_AUTHOR,
-        Role.POLICY_OWNER,
+        Role.POLICY_EDITOR,
+        Role.APPROVER,
     ])),
     db: AsyncSession = Depends(get_db_session),
 ):
@@ -2497,6 +2956,7 @@ async def raise_policy_ambiguity(
         source_citation=request.source_citation,
         question=request.question,
         interpretation_options=request.interpretation_options,
+        affected_target_paths=request.affected_target_paths,
         created_by=user.user_id,
     )
     return record
@@ -2508,9 +2968,8 @@ async def list_policy_ambiguities(
     status: Optional[Literal["OPEN", "RESOLVED"]] = None,
     user: UserIdentity = Depends(require_role([
         Role.TENANT_ADMIN,
-        Role.RULE_AUTHOR,
-        Role.RULE_APPROVER,
-        Role.POLICY_OWNER,
+        Role.POLICY_EDITOR,
+        Role.APPROVER,
         Role.AUDITOR,
     ])),
     db: AsyncSession = Depends(get_db_session),
@@ -2530,7 +2989,7 @@ async def list_policy_ambiguities(
 async def resolve_policy_ambiguity(
     ambiguity_id: str,
     request: PolicyAmbiguityResolutionRequest,
-    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.POLICY_OWNER])),
+    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.APPROVER])),
     db: AsyncSession = Depends(get_db_session),
 ):
     """Records the authorised interpretation and its source, append-only."""
@@ -2555,7 +3014,7 @@ async def resolve_policy_ambiguity(
 @app.post("/api/v1/governance/releases", status_code=201)
 async def release_policy(
     request: ReleasePolicyRequest,
-    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.RULE_APPROVER])),
+    user: UserIdentity = Depends(require_role([Role.TENANT_ADMIN, Role.APPROVER])),
     db: AsyncSession = Depends(get_db_session)
 ):
     """
@@ -2597,29 +3056,41 @@ async def release_policy(
             detail=f"Release version {request.version} already exists for this domain.",
         )
 
-    ambiguity_repo = PolicyAmbiguityRepository(db)
-    if await ambiguity_repo.has_open_ambiguities(
-        tenant_id=user.tenant_id,
-        domain_id=draft.domain_id,
-    ):
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                "This domain has unresolved policy ambiguities. Record an authorised interpretation "
-                "with its source before publishing a release."
-            ),
-        )
-
     try:
         release_id = "rel_" + uuid.uuid4().hex
         rule_graph = compile_release_to_graph(release_id, draft.payload)
     except (ValueError, UnsupportedOperatorError) as e:
         raise HTTPException(status_code=422, detail=f"Draft failed compilation, cannot be released: {str(e)}")
+    try:
+        source_manifest, source_manifest_hash = build_policy_source_manifest(draft.payload)
+    except PolicySourceManifestError as e:
+        raise HTTPException(status_code=422, detail=f"Draft cannot be released without source provenance: {str(e)}")
+
+    def expression_targets(node: Any) -> set[str]:
+        targets = {node.target} if node.target else set()
+        for child in node.children or []:
+            targets.update(expression_targets(child))
+        return targets
+
+    ambiguity_repo = PolicyAmbiguityRepository(db)
+    if await ambiguity_repo.has_open_ambiguities(
+        tenant_id=user.tenant_id,
+        domain_id=draft.domain_id,
+        affected_target_paths=expression_targets(rule_graph.root_expression),
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This release depends on unresolved policy ambiguities. Record an authorised interpretation "
+                "with its source before publishing it."
+            ),
+        )
 
     applicability = {
         criterion.attribute: criterion.values
         for criterion in request.applicability
     }
+    workflows = [WorkflowRule.model_validate(workflow.model_dump()) for workflow in request.workflows]
     # The signature covers identity, scheduling, applicability, and rule logic.
     # Otherwise a policy could be re-scoped without invalidating its signature.
     signature_payload = {
@@ -2632,7 +3103,10 @@ async def release_policy(
             "effective_from": request.effective_from.isoformat(),
             "effective_until": request.effective_until.isoformat() if request.effective_until else None,
             "applicability": applicability,
+            "workflows": [workflow.model_dump(mode="json") for workflow in workflows],
+            "source_manifest_hash": source_manifest_hash,
         },
+        "source_manifest": source_manifest,
     }
     crypto = CryptoService()
     signature_hex, _hash_hex = crypto.sign_payload(signature_payload)
@@ -2650,13 +3124,18 @@ async def release_policy(
         effective_from=request.effective_from,
         effective_until=request.effective_until,
         applicability=applicability,
+        workflows=workflows,
+        source_manifest_hash=source_manifest_hash,
     )
     try:
+        approved_at = datetime.now(timezone.utc)
         await release_repo.create_release(
             release,
             rule_graph,
             draft.payload["root"],
             draft_id=draft.id,
+            approved_by=user.user_id,
+            approved_at=approved_at,
         )
     except (
         DraftReleaseConflictError,
@@ -2673,9 +3152,12 @@ async def release_policy(
         "effective_from": release.effective_from,
         "effective_until": release.effective_until,
         "applicability": release.applicability,
+        "workflow_count": len(release.workflows),
+        "source_manifest_hash": release.source_manifest_hash,
         "signing_key_id": release.signing_key_id,
         "signed_payload_hash": release.signed_payload_hash,
         "approved_by": user.user_id,
+        "approved_at": approved_at,
         "authored_by": draft.author_id
     }
 

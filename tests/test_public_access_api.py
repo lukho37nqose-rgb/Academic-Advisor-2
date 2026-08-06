@@ -63,6 +63,10 @@ def test_public_policy_guide_exposes_approved_rules_and_separate_assistance(tmp_
                             "support_privacy_notice_url": "https://example.test/privacy",
                             "offline_assistance_instructions": "Call the Student Support desk on weekdays.",
                         },
+                        "presentation": {
+                            "governed_person_label": "student",
+                            "position_collection_label": "support positions",
+                        },
                     },
                 )
             )
@@ -101,7 +105,7 @@ def test_public_policy_guide_exposes_approved_rules_and_separate_assistance(tmp_
 
         app.dependency_overrides[get_current_user] = lambda: UserIdentity(
             tenant_id="tenant_public",
-            role=Role.ASSISTANCE_COORDINATOR,
+            role=Role.STAFF_MEMBER,
             user_id="coordinator_1",
             domain_ids=["dom_public"],
         )
@@ -149,6 +153,8 @@ def test_public_policy_guide_exposes_approved_rules_and_separate_assistance(tmp_
     }]
     assert guide.status_code == 200
     rule = guide.json()["policy"]
+    assert guide.json()["governed_person_label"] == "student"
+    assert guide.json()["position_collection_label"] == "support positions"
     assert rule["fact_label"] == "Annual household income"
     assert rule["citation"] == "Support Policy 2026, section 2.1"
     assert "target" not in rule

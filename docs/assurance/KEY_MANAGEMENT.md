@@ -18,7 +18,9 @@ snapshot permits historical verification after a key is rotated.
 5. Treat a failed signature verification as a security event. In production,
    evaluation rejects an incomplete or invalid verification bundle.
 
-Current limitation: a release signs policy and release scheduling metadata and
-the evaluator re-compiles the signed policy to compare it with the persisted
-graph. It does not yet include a policy-source manifest hash. That link is an
-open control, not an implied property of the present signature.
+Current implementation: a release signs policy, release scheduling metadata,
+workflow intents, and a canonical policy-source manifest hash. The evaluator
+re-compiles the signed policy and compares it with the persisted graph before
+production evaluation. The signature proves that the release was approved with
+that citation structure; the institution must still prove that the cited
+documents are authoritative and current.

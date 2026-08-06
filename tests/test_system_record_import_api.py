@@ -46,7 +46,7 @@ async def _store_domain(session_factory) -> None:
 def _author() -> UserIdentity:
     return UserIdentity(
         tenant_id="tenant_import",
-        role=Role.RULE_AUTHOR,
+        role=Role.POLICY_EDITOR,
         user_id="author_1",
         domain_ids=["dom_import"],
     )

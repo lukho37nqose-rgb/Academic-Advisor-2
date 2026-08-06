@@ -16,6 +16,7 @@ from app.infrastructure.database import get_db_session
 from app.infrastructure.db import Base, DBDomain, DBTenant
 from app.infrastructure.repositories import ReleaseRepository
 from app.services.auth import Role, UserIdentity, get_current_user
+from app.services.policy_source_manifest import build_policy_source_manifest
 
 
 TENANT_ID = "tenant_timeline"
@@ -60,6 +61,7 @@ async def _seed_signed_release(session_factory) -> None:
     }
     rule_graph = compile_release_to_graph(RELEASE_ID, policy)
     effective_from = date(2026, 1, 1)
+    source_manifest, source_manifest_hash = build_policy_source_manifest(policy)
     signed_payload = {
         "policy": policy,
         "release": {
@@ -70,7 +72,9 @@ async def _seed_signed_release(session_factory) -> None:
             "effective_from": effective_from.isoformat(),
             "effective_until": None,
             "applicability": {},
+            "source_manifest_hash": source_manifest_hash,
         },
+        "source_manifest": source_manifest,
     }
     crypto = CryptoService()
     signature, payload_hash = crypto.sign_payload(signed_payload)
@@ -96,6 +100,7 @@ async def _seed_signed_release(session_factory) -> None:
                 signing_key_id=crypto.key_id,
                 signing_public_key=crypto.public_key_pem,
                 effective_from=effective_from,
+                source_manifest_hash=source_manifest_hash,
             ),
             rule_graph,
             policy["root"],
@@ -138,7 +143,7 @@ def test_institutional_timeline_preserves_certified_history_and_subject_privacy(
     asyncio.run(_create_schema(engine))
     asyncio.run(_seed_signed_release(session_factory))
 
-    current_user = _identity(Role.INSTITUTIONAL_RECORDS_STEWARD, "records_1")
+    current_user = _identity(Role.STAFF_MEMBER, "records_1")
 
     async def _test_db_session():
         async with session_factory() as session:
@@ -160,7 +165,7 @@ def test_institutional_timeline_preserves_certified_history_and_subject_privacy(
         current_user = _identity(Role.SUBJECT, "subject_identity_1", "subject_1")
         pending_subject_timeline = client.get("/api/v1/institutional-timeline")
 
-        current_user = _identity(Role.INSTITUTIONAL_RECORDS_STEWARD, "records_1")
+        current_user = _identity(Role.STAFF_MEMBER, "records_1")
         recorder_attestation = client.post(
             f"/api/v1/governance/institutional-context-events/{event_id}/attest",
             json={"domain_id": DOMAIN_ID, "action": "CERTIFY", "note": "A records steward must not certify an institutional context event."},
@@ -171,25 +176,25 @@ def test_institutional_timeline_preserves_certified_history_and_subject_privacy(
             f"/api/v1/governance/institutional-context-events/{event_id}/attest",
             json={"domain_id": DOMAIN_ID, "action": "CERTIFY", "note": "The recorder must not certify their own institutional context event."},
         )
-        current_user = _identity(Role.POLICY_OWNER, "policy_owner_1")
+        current_user = _identity(Role.APPROVER, "approver_1")
         certified = client.post(
             f"/api/v1/governance/institutional-context-events/{event_id}/attest",
             json={"domain_id": DOMAIN_ID, "action": "CERTIFY", "note": "Authority reference and the subject-safe explanation were independently verified."},
         )
 
-        current_user = _identity(Role.INSTITUTIONAL_RECORDS_STEWARD, "records_1")
+        current_user = _identity(Role.STAFF_MEMBER, "records_1")
         staff_only_submission = client.post(
             "/api/v1/governance/institutional-context-events",
             json=_event_payload(title="Internal committee handling note", visibility="STAFF_ONLY"),
         )
         staff_only_id = staff_only_submission.json()["event_id"]
-        current_user = _identity(Role.POLICY_OWNER, "policy_owner_1")
+        current_user = _identity(Role.APPROVER, "approver_1")
         staff_only_certified = client.post(
             f"/api/v1/governance/institutional-context-events/{staff_only_id}/attest",
             json={"domain_id": DOMAIN_ID, "action": "CERTIFY", "note": "The internal-only handling record was independently verified."},
         )
 
-        current_user = _identity(Role.INSTITUTIONAL_RECORDS_STEWARD, "records_1")
+        current_user = _identity(Role.STAFF_MEMBER, "records_1")
         revocation_submission = client.post(
             "/api/v1/governance/institutional-context-events",
             json=_event_payload(
@@ -199,7 +204,7 @@ def test_institutional_timeline_preserves_certified_history_and_subject_privacy(
             ),
         )
         revocation_id = revocation_submission.json()["event_id"]
-        current_user = _identity(Role.POLICY_OWNER, "policy_owner_1")
+        current_user = _identity(Role.APPROVER, "approver_1")
         revocation_certified = client.post(
             f"/api/v1/governance/institutional-context-events/{revocation_id}/attest",
             json={"domain_id": DOMAIN_ID, "action": "CERTIFY", "note": "The later committee decision concludes the earlier concession."},

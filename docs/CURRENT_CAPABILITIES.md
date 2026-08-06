@@ -7,14 +7,16 @@ institution without the deployment and pilot controls described below.
 ## In plain language
 
 An institution can put a policy into a controlled draft, have a different
-person approve it, then evaluate independently accepted facts against that
+person approve it, then evaluate accepted facts against that
 approved version. The same accepted facts and policy release produce the same
 decision every time. A decision has a trace showing which rule and facts led to
 it, and is tied to the exact signed policy version used at the time.
 
 Raw evidence does not decide anything. An authorised staff member records a
 candidate fact against preserved source bytes, a quotation, and a location. A
-different policy owner or tenant administrator accepts or rejects it. Before a
+different approver or tenant administrator accepts or rejects it. Confirmed
+records from an independently approved system-of-record mapping are accepted
+through that recorded mapping review. Before a
 decision or replay is run, the application recalculates the SHA-256 hash of the
 stored source and fails closed if it no longer matches the evidence record.
 
@@ -27,20 +29,22 @@ course description. Those corrections are limited to fields an institution has
 configured as low risk and receive an audit record. They cannot alter a rule,
 prerequisite, credit requirement, or published release.
 
-The system can define and independently approve a CSV mapping for a
-system-of-record export, then check a file against that mapping. It does not
-import the CSV into institutional records or write back to any external system.
+The system can define and independently approve a source-record mapping, then
+check a file-based export against that mapping. CSV remains the portable
+fallback and regression fixture; the enterprise path is governed read-only
+source-system access that creates evidence and accepted facts only after source
+and mapping review. It does not write back to any external system.
 
-Staff can also create a shadow-calibration suite without writing code or JSON.
+Staff can also create an outcome-calibration suite without writing code or JSON.
 It compares synthetic representative cases, or privacy-approved de-identified
 historical cases, with one signed policy release. A different staff member must
 certify the suite before it can run. The comparison produces an immutable report
 of matches and mismatches; it cannot alter a subject record, a policy release,
 or an operative institutional decision.
 
-An institutional records steward can record an already-authorised concession,
+An assigned staff member can record an already-authorised concession,
 appeal outcome, curriculum applicability decision, assessment accommodation, or
-other structured context event. A different policy owner or tenant administrator
+other structured context event. A different approver or tenant administrator
 must certify it before a subject can see a safe explanation in their
 Institutional Timeline. Later events can supersede or revoke earlier ones
 without erasing the original record.
@@ -63,16 +67,13 @@ role, tenant, domain, and subject-ownership check.
 | Account role | Visible workspace pages | Actions it may take |
 | --- | --- | --- |
 | Subject | Public policy guide; their own personal policy-position view | View how the common approved policy applies to their own authorised trace; request assistance or a review where the institution enabled it. |
-| Metadata steward | Governance Desk | Apply only pre-configured low-risk metadata edits in assigned domains. |
-| Institutional records steward | Institutional Timeline; Evidence Facts | Record an existing, source-referenced institutional decision or cited evidence fact for independent certification. Cannot certify it, alter a policy, or create an exception. |
-| Assistance coordinator | Assistance Inbox; Review Cases; Institutional Timeline | Triage assigned casework and inspect institutional context in assigned domains. Cannot record or certify context events. |
-| Policy author | Handbook Intake; System Records; Policy Register; Shadow Calibration | Upload/review source material, submit mapping configurations, record policy ambiguities, prepare non-identifying calibration suites, and use the draft API. Cannot approve releases or certify their own calibration suite. |
-| Release approver | Handbook Intake; System Records; Policy Review; Policy Register; Shadow Calibration | Inspect source material, independently review mappings and calibration cases, inspect ambiguities, and approve a release. Cannot upload or revise a handbook source. |
-| Policy owner | Policy Register; Shadow Calibration; Institutional Timeline; Evidence Facts | Record or resolve documented interpretations with an authoritative source; independently certify a calibration suite, classify its mismatches, and accept or reject a cited evidence fact or context record. A person cannot resolve or certify their own record. |
-| Auditor | Governance Desk; Handbook Intake; System Records; Assistance Inbox; Policy Review; Policy Register; Shadow Calibration; Institutional Timeline; Evidence Facts | Read-only inspection of configured controls, source material, mapping records, casework, policy review, interpretation records, calibration reports, and evidence-fact history. |
+| Staff member | Governance Desk; Assistance Inbox; Review Cases; Institutional Timeline; Evidence Facts | Work with assigned-domain records and casework, ingest authorised evidence, propose cited facts, record institutional context, and apply pre-configured low-risk metadata edits. Cannot attest their own work or change policy. |
+| Policy editor | Institution Setup; Handbook Intake; System Records; Policy Register; Outcome Calibration | Build no-code domains and policy drafts, upload/review source material, submit mappings, record ambiguities, and prepare non-identifying calibration suites. Cannot approve releases or certify their own calibration suite. |
+| Approver | Handbook Intake; System Records; Policy Review; Policy Register; Outcome Calibration; Institutional Timeline; Evidence Facts | Independently accept or reject cited facts and context, settle sourced interpretations, review mappings and calibration cases, and publish another person's release. A person cannot approve their own work. |
+| Auditor | Governance Desk; Handbook Intake; System Records; Assistance Inbox; Policy Review; Policy Register; Outcome Calibration; Institutional Timeline; Evidence Facts | Read-only inspection of configured controls, source material, mapping records, casework, policy review, interpretation records, calibration reports, and evidence-fact history. |
 | Tenant administrator | All staff pages | Break-glass administration across the tenant. The release and mapping workflows still enforce separation of duties. |
 
-The former demo `Begin Investigation` control is deliberately not presented in
+The former reference `Begin Investigation` control is deliberately not presented in
 the tenant workspace. An evaluation can create decision artefacts and audit
 activity, so the production UI must not create one from placeholder data. The
 evaluation API remains limited to a tenant administrator or the subject who
@@ -81,7 +82,7 @@ owns the evidence; a real operational evaluation flow is still to be built.
 ## Controls that are implemented
 
 - Deterministic evaluation and trace-bound explanation of compiled policy rules.
-  Evaluation accepts only independently reviewed facts bound to preserved source
+  Evaluation accepts only governed, accepted facts bound to preserved source
   bytes. Automated extraction remains untrusted source assistance, not policy
   logic or an outcome decision.
 - Auditors can run a replay verifier. It rechecks the evidence hash, signed
@@ -101,7 +102,10 @@ owns the evidence; a real operational evaluation flow is still to be built.
 - System-record mapping configuration is immutable after submission, has an
   append-only event history, and requires an independent reviewer before it is
   approved.
-- Shadow-calibration suites are tenant and domain scoped, immutable after
+- Releases bind their cited rule-source manifest into the signed release
+  payload. A production evaluation fails closed if release metadata, policy,
+  source manifest, compiled graph, or signature no longer agree.
+- Outcome-calibration suites are tenant and domain scoped, immutable after
   submission, independently certified, and recorded as a single immutable
   non-operative run. The author cannot certify their own suite or classify its
   mismatches.
@@ -120,16 +124,18 @@ owns the evidence; a real operational evaluation flow is still to be built.
 
 - It has not been verified against UCT's real handbook corpus, policies,
   student records, or governance process.
-- It has no completed institutional SSO browser flow; the reference client
-  accepts a host-supplied bearer token while the API validates the token.
+- It has an institutional OIDC browser flow in the reference client, and the
+  API validates the token. A real deployment still requires the institution's
+  approved IdP registration, claim mapping, revocation rehearsal, and portal or
+  hosting route.
 - It has no operational administrator interface for authoring every kind of
   policy draft, no completed subject evidence/appeal portal, and no production
   notification service.
-- An accepted evidence fact cannot be overwritten. A first-class correction or
-  successor-fact workflow that preserves the earlier evaluation input while
-  governing the replacement is still required before live operational use.
-- It does not perform a live system-of-record import, automated handbook-to-
-  rule conversion, or external workflow write-back.
+- An accepted evidence fact cannot be overwritten. Corrections use a successor-
+  fact relationship that preserves the original evaluation input and records an
+  append-only supersession event.
+- It does not yet include a production-approved live system-of-record connector,
+  automated handbook-to-rule conversion, or external workflow write-back.
 - It does not automatically ingest transcripts, committee decisions, emails, or
   historic records into the Institutional Timeline. Staff must first record and
   certify context with institution-approved source references.

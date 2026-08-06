@@ -8,11 +8,9 @@ not the enforcement boundary.
 | Role | Permitted work | Explicitly denied work |
 | --- | --- | --- |
 | Subject | Their own evidence, evaluation, trace, and review case; approved public policy information. | Other subjects' records; staff workspaces; policy, source, mapping, or casework changes. |
-| Metadata steward | Configured low-risk metadata edits in assigned domains. | Rules, prerequisites, releases, evidence, traces, and casework. |
-| Assistance coordinator | Assigned assistance and decision-review casework. | Policy, source, mapping, evidence, and original trace changes. |
-| Policy author | Draft policy API; handbook source intake; mapping submission; ambiguity records. | Release approval, own release publication, assistance casework, and other domains. |
-| Release approver | Inspect sources; independently review mappings; approve a different author's eligible policy release. | Source alteration, draft authoring through staff UI, own-release approval, and evidence changes. |
-| Policy owner | Record and resolve a documented policy interpretation in an assigned domain. | Releases, evidence, source editing, mappings, and resolving their own ambiguity. |
+| Staff member | Assigned-domain evidence intake, cited fact proposals, institutional context, low-risk metadata, assistance, and decision-review casework. | Policy changes, release publication, and attestation of their own proposal or record. |
+| Policy editor | No-code domain setup, policy drafts, handbook source intake, mapping submission, and ambiguity records. | Release approval, own-release publication, and other domains. |
+| Approver | Independently review facts, context, mappings, calibration cases, ambiguities, and publish a different author's eligible release. | Approval or certification of their own proposal, record, calibration suite, or draft. |
 | Auditor | Read-only governance, source, mapping, assistance, policy, and trace inspection in assigned domains. | Every write route. |
 | Tenant administrator | Monitored break-glass administration across tenant domains; identifier-only durable-job status. | Bypassing immutable release/mapping transitions or separation-of-duties checks; automatic dead-letter replay. |
 

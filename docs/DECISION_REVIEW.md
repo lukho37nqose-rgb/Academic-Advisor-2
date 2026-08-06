@@ -16,8 +16,10 @@ academic, disciplinary, or accommodation process.
 - Submitting or resolving a case never changes the source evidence, accepted
   facts, signed release, policy, original decision, or original explanation.
 - A correction can be assessed only through a new governed evidence record and
-  evaluation, producing a new trace. Both traces remain available for audit;
-  a first-class successor-fact workflow is not yet implemented.
+  evaluation, producing a new trace. Both traces remain available for audit. An
+  authorised policy owner may append a supersession relationship between two
+  facts in an existing historical trace, but that annotation never alters the
+  original outcome or substitutes for independently accepted future evidence.
 - A coordinator is restricted to assigned domains. A subject sees only their
   own cases. Tenant administrators retain monitored break-glass access.
 - Each action writes an append-only event with a sequence number and actor.
@@ -59,8 +61,8 @@ an assertion that a URL alone constitutes subject authentication.
 
 ## UCT pilot use
 
-For the UCT case study, this workflow must remain in shadow mode until UCT has
-approved its policy owner, casework owner, privacy basis, response commitment,
-assisted route, and the relationship to any existing UCT review or appeal
-process. A case outcome must not be communicated as an operative UCT decision
-until that separate approval exists.
+For the UCT case study, this workflow must remain in non-operative validation
+until UCT has approved its policy owner, casework owner, privacy basis,
+response commitment, assisted route, and the relationship to any existing UCT
+review or appeal process. A case outcome must not be communicated as an
+operative UCT decision until that separate approval exists.

@@ -9,12 +9,9 @@ from app.services.auth import Role, UserIdentity, get_current_user
 
 _EXPECTED_WORKSPACES: dict[Role, tuple[str, list[str]]] = {
     Role.TENANT_ADMIN: ("staff", ["governance", "institution_setup", "handbook_intake", "record_import", "assistance_inbox", "decision_review_inbox", "policy_review", "policy_ambiguities", "shadow_calibration", "institutional_timeline", "evidence_facts"]),
-    Role.METADATA_STEWARD: ("staff", ["governance"]),
-    Role.INSTITUTIONAL_RECORDS_STEWARD: ("staff", ["institutional_timeline", "evidence_facts"]),
-    Role.ASSISTANCE_COORDINATOR: ("staff", ["assistance_inbox", "decision_review_inbox", "institutional_timeline"]),
-    Role.RULE_AUTHOR: ("staff", ["handbook_intake", "record_import", "policy_ambiguities", "shadow_calibration"]),
-    Role.RULE_APPROVER: ("staff", ["handbook_intake", "record_import", "policy_review", "policy_ambiguities", "shadow_calibration"]),
-    Role.POLICY_OWNER: ("staff", ["policy_ambiguities", "shadow_calibration", "institutional_timeline", "evidence_facts"]),
+    Role.STAFF_MEMBER: ("staff", ["governance", "assistance_inbox", "decision_review_inbox", "institutional_timeline", "evidence_facts"]),
+    Role.POLICY_EDITOR: ("staff", ["institution_setup", "handbook_intake", "record_import", "policy_ambiguities", "shadow_calibration"]),
+    Role.APPROVER: ("staff", ["handbook_intake", "record_import", "policy_review", "policy_ambiguities", "shadow_calibration", "institutional_timeline", "evidence_facts"]),
     Role.AUDITOR: ("staff", ["governance", "handbook_intake", "record_import", "assistance_inbox", "policy_review", "policy_ambiguities", "shadow_calibration", "institutional_timeline", "evidence_facts"]),
     Role.SUBJECT: ("subject", ["policy_guides"]),
 }
@@ -53,11 +50,9 @@ def test_workspace_capabilities_are_derived_from_the_full_role_matrix(
     "role",
     [
         Role.SUBJECT,
-        Role.ASSISTANCE_COORDINATOR,
-        Role.INSTITUTIONAL_RECORDS_STEWARD,
-        Role.RULE_AUTHOR,
-        Role.RULE_APPROVER,
-        Role.POLICY_OWNER,
+        Role.POLICY_EDITOR,
+        Role.APPROVER,
+        Role.AUDITOR,
         Role.AUDITOR,
     ],
 )
@@ -85,10 +80,7 @@ def test_only_metadata_roles_can_call_the_quick_edit_route(role: Role) -> None:
     "role",
     [
         Role.SUBJECT,
-        Role.METADATA_STEWARD,
-        Role.ASSISTANCE_COORDINATOR,
-        Role.RULE_AUTHOR,
-        Role.RULE_APPROVER,
+        Role.POLICY_EDITOR,
     ],
 )
 def test_only_fact_review_roles_can_list_subject_evidence(role: Role) -> None:
@@ -106,7 +98,7 @@ def test_only_fact_review_roles_can_list_subject_evidence(role: Role) -> None:
 
 @pytest.mark.parametrize(
     "role",
-    [Role.METADATA_STEWARD, Role.INSTITUTIONAL_RECORDS_STEWARD, Role.RULE_AUTHOR, Role.RULE_APPROVER, Role.POLICY_OWNER],
+    [Role.POLICY_EDITOR, Role.APPROVER],
 )
 def test_non_casework_staff_cannot_retrieve_a_reasoning_trace(role: Role) -> None:
     app.dependency_overrides[get_current_user] = lambda: _identity(role)
@@ -120,7 +112,7 @@ def test_non_casework_staff_cannot_retrieve_a_reasoning_trace(role: Role) -> Non
 
 @pytest.mark.parametrize(
     "role",
-    [Role.SUBJECT, Role.INSTITUTIONAL_RECORDS_STEWARD, Role.ASSISTANCE_COORDINATOR, Role.RULE_AUTHOR, Role.RULE_APPROVER, Role.POLICY_OWNER],
+    [Role.SUBJECT, Role.POLICY_EDITOR, Role.APPROVER],
 )
 def test_only_governance_roles_can_read_configured_metadata_surface(role: Role) -> None:
     app.dependency_overrides[get_current_user] = lambda: _identity(role)
@@ -139,12 +131,8 @@ def test_only_governance_roles_can_read_configured_metadata_surface(role: Role) 
     "role",
     [
         Role.SUBJECT,
-        Role.METADATA_STEWARD,
-        Role.INSTITUTIONAL_RECORDS_STEWARD,
-        Role.ASSISTANCE_COORDINATOR,
-        Role.RULE_AUTHOR,
-        Role.RULE_APPROVER,
-        Role.POLICY_OWNER,
+        Role.POLICY_EDITOR,
+        Role.APPROVER,
         Role.AUDITOR,
     ],
 )

@@ -35,13 +35,16 @@ _RLS_TABLES = (
     "policy_ambiguity_events", "handbook_uploads", "handbook_upload_sessions",
     "handbook_pages", "handbook_ocr_reviews", "handbook_ocr_review_events",
     "background_jobs",
-    "metadata_overrides", "metadata_quick_edits", "releases", "rule_graphs",
+    "metadata_overrides", "metadata_quick_edits", "releases", "rule_graphs", "workflow_outbox",
     "system_record_import_mappings", "system_record_import_mapping_events",
+    "institutional_data_sources",
     "evidence", "evidence_fact_proposals", "evidence_fact_proposal_events", "claims", "facts", "support_requests", "support_request_events",
     "decision_review_cases", "decision_review_case_events", "reasoning_graphs",
+    "evidence_deletion_events", "fact_supersession_events", "reasoning_graph_deletion_events",
     "shadow_calibration_suites", "shadow_calibration_cases", "shadow_calibration_suite_events",
     "shadow_calibration_runs", "shadow_calibration_findings",
     "institutional_context_events", "institutional_context_event_attestations",
+    "provider_tenant_controls", "provider_support_access_requests",
 )
 
 _IMMUTABLE_DECISION_ARTIFACT_TRIGGERS = {
@@ -51,6 +54,9 @@ _IMMUTABLE_DECISION_ARTIFACT_TRIGGERS = {
     "reasoning_graphs": "prevent_reasoning_graphs_mutation",
     "releases": "prevent_releases_mutation",
     "rule_graphs": "prevent_rule_graphs_mutation",
+    "evidence_deletion_events": "prevent_evidence_deletion_events_mutation",
+    "fact_supersession_events": "prevent_fact_supersession_events_mutation",
+    "reasoning_graph_deletion_events": "prevent_reasoning_graph_deletion_events_mutation",
 }
 
 

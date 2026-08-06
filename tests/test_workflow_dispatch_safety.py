@@ -17,13 +17,13 @@ def _release() -> Release:
             WorkflowRule(
                 id="workflow_pass",
                 trigger_condition="overall == pass",
-                action_type="external_record_update",
+                action_type="PREPARE_NO_WRITE_EXPORT",
                 action_payload={"status": "approved"},
             ),
             WorkflowRule(
                 id="workflow_fail",
                 trigger_condition="overall == fail",
-                action_type="external_record_update",
+                action_type="PREPARE_NO_WRITE_EXPORT",
                 action_payload={"status": "rejected"},
             ),
         ],

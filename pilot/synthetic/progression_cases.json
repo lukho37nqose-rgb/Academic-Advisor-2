@@ -59,8 +59,8 @@
       "subject_reference": "synthetic-subject-below-threshold"
     },
     {
-      "description": "Missing credits must fail closed rather than be inferred.",
-      "expected_decision": "INELIGIBLE",
+      "description": "Missing credits must be routed to review rather than inferred or treated as a failure.",
+      "expected_decision": "NEEDS_MANUAL_REVIEW",
       "facts": [
         {
           "final_confidence": 1.0,

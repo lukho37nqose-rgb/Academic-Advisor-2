@@ -22,12 +22,9 @@ class InterfaceCapabilities(TypedDict):
 
 _ROLE_LABELS: dict[Role, str] = {
     Role.TENANT_ADMIN: "Tenant administrator",
-    Role.METADATA_STEWARD: "Metadata steward",
-    Role.INSTITUTIONAL_RECORDS_STEWARD: "Institutional records steward",
-    Role.ASSISTANCE_COORDINATOR: "Assistance coordinator",
-    Role.RULE_AUTHOR: "Policy author",
-    Role.RULE_APPROVER: "Release approver",
-    Role.POLICY_OWNER: "Policy owner",
+    Role.STAFF_MEMBER: "Staff member",
+    Role.POLICY_EDITOR: "Policy editor",
+    Role.APPROVER: "Approver",
     Role.AUDITOR: "Auditor",
     Role.SUBJECT: "Subject",
 }
@@ -48,12 +45,29 @@ _STAFF_VIEWS: dict[Role, tuple[str, ...]] = {
         "institutional_timeline",
         "evidence_facts",
     ),
-    Role.METADATA_STEWARD: ("governance",),
-    Role.INSTITUTIONAL_RECORDS_STEWARD: ("institutional_timeline", "evidence_facts"),
-    Role.ASSISTANCE_COORDINATOR: ("assistance_inbox", "decision_review_inbox", "institutional_timeline"),
-    Role.RULE_AUTHOR: ("handbook_intake", "record_import", "policy_ambiguities", "shadow_calibration"),
-    Role.RULE_APPROVER: ("handbook_intake", "record_import", "policy_review", "policy_ambiguities", "shadow_calibration"),
-    Role.POLICY_OWNER: ("policy_ambiguities", "shadow_calibration", "institutional_timeline", "evidence_facts"),
+    Role.STAFF_MEMBER: (
+        "governance",
+        "assistance_inbox",
+        "decision_review_inbox",
+        "institutional_timeline",
+        "evidence_facts",
+    ),
+    Role.POLICY_EDITOR: (
+        "institution_setup",
+        "handbook_intake",
+        "record_import",
+        "policy_ambiguities",
+        "shadow_calibration",
+    ),
+    Role.APPROVER: (
+        "handbook_intake",
+        "record_import",
+        "policy_review",
+        "policy_ambiguities",
+        "shadow_calibration",
+        "institutional_timeline",
+        "evidence_facts",
+    ),
     Role.AUDITOR: ("governance", "handbook_intake", "record_import", "assistance_inbox", "policy_review", "policy_ambiguities", "shadow_calibration", "institutional_timeline", "evidence_facts"),
 }
 

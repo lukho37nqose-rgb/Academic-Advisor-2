@@ -2,8 +2,8 @@
 
 The decision runtime may identify post-decision workflow rules, but it must not
 pretend to call an institutional system from an in-process background task. A
-future production integration must supply a durable, tenant-scoped outbox and a
-separately operated dispatcher.
+production integration must use the durable outbox and a separately operated
+dispatcher.
 """
 
 from __future__ import annotations
@@ -43,7 +43,7 @@ def select_triggered_workflows(release: Release, summary: EvaluationSummary) -> 
 async def execute_workflow_actions(release: Release, summary: EvaluationSummary) -> WorkflowDispatchResult:
     """Record that delivery is withheld until a durable dispatcher is configured.
 
-    This legacy entry point remains callable for compatibility, but intentionally
+    This compatibility entry point remains callable, but intentionally
     does not start tasks, issue network requests, sleep, or execute payloads.
     """
 

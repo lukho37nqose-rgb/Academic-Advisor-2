@@ -12,7 +12,7 @@ The guide is an explanation of an approved policy, not a self-service decision. 
 
 Every public guide can enable a human-assistance path. A person may identify missing information, a unique circumstance, an accessibility need, or another barrier without having to turn that message into machine evidence.
 
-Support requests are stored in a separate workflow table. They cannot alter evidence, facts, policy drafts, releases, or a decision. An assistance coordinator can view requests only for assigned domains and move a request through `OPEN`, `IN_PROGRESS`, and `CLOSED`. Each status transition is appended to a per-request sequence with the responsible account. Auditors can inspect the queue and its history but cannot alter it.
+Support requests are stored in a separate workflow table. They cannot alter evidence, facts, policy drafts, releases, or a decision. An assigned staff member can view requests only for their domains and move a request through `OPEN`, `IN_PROGRESS`, and `CLOSED`. Each status transition is appended to a per-request sequence with the responsible account. Auditors can inspect the queue and its history but cannot alter it.
 
 When an institution enables assistance for a new domain, it must record a privacy notice URL, a response target in hours, and an assisted or offline contact route. Every new request receives a response deadline. Closing a request starts its configured retention period; reopening it clears the expiry. Run `python -m app.services.retention` on the institution's scheduler at least daily to delete closed requests and their status history after the retention period.
 

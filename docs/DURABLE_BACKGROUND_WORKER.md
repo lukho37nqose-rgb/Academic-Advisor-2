@@ -6,6 +6,13 @@ source-state transition. The queue record contains a job type and source
 identifier only. It never stores handbook text, policy data, evidence, or a
 subject identifier.
 
+Production AWS deployments may also configure
+`IRE_BACKGROUND_JOB_SIGNAL_QUEUE_URL`. That SQS queue is a wakeup channel only:
+messages contain the tenant, domain, job, job type, and resource identifiers so
+workers can avoid slow polling. Workers still claim, lease, retry, and complete
+jobs through PostgreSQL under tenant RLS. If SQS is unavailable, the worker logs
+the signal failure and continues to poll the PostgreSQL ledger.
+
 ## Execution boundary
 
 Run the worker separately from the API with the restricted serving database
@@ -14,6 +21,7 @@ credential and an explicit tenant allowlist:
 ```powershell
 $env:IRE_WORKER_TENANT_IDS = 'tenant_uct_pilot'
 $env:IRE_WORKER_ID = 'uct-pilot-worker-a'
+$env:IRE_BACKGROUND_JOB_SIGNAL_QUEUE_URL = 'https://sqs.af-south-1.amazonaws.com/...'
 python -m app.services.background_worker
 ```
 

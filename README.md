@@ -24,7 +24,7 @@ can see how those rules applied to their own record. See
 
 ## Current State
 
-The repository demonstrates:
+The current implemented surface includes:
 
 - deterministic evaluation through a domain-neutral engine;
 - curriculum and grant domains evaluated without changing the evaluator;
@@ -54,8 +54,9 @@ The repository demonstrates:
   boundary that blocks partial or malformed imports;
 - governed, immutable system-record mapping configurations with independent
   approval, append-only review history, and forced PostgreSQL tenant RLS;
-- fail-closed external workflow handling: the runtime does not select, queue,
-  simulate, or deliver an institutional write without a durable dispatcher;
+- fail-closed external workflow handling: signed workflow rules can create held
+  outbox records with an evaluation, but nothing is delivered without a durable
+  dispatcher;
 - production fail-closed configuration checks, non-root container execution,
   separate migration deployment, and health/readiness probes with request IDs;
 - a reference React interface for reasoning traces and governance.
@@ -178,8 +179,8 @@ Use `.env.example` as the local configuration inventory. Do not commit secrets.
 - SQLite is for tests; production startup rejects it and requires Postgres,
   Redis, object storage, OIDC, a usable signing key, and reviewed Alembic
   migrations.
-- Quick-edit target existence is not yet checked against a canonical Edge resource
-  store.
+- Quick-edit targets are checked against the domain's approved Edge resource
+  catalogue before a low-risk metadata overlay is accepted.
 - PostgreSQL makes decision-bearing evidence, claims, facts, traces, releases,
   compiled rules, and reviewed fact lifecycles append-only. Some supporting
   audit tables still rely on their specific lifecycle controls and remain
@@ -200,6 +201,7 @@ Use `.env.example` as the local configuration inventory. Do not commit secrets.
 See [PRODUCT_DEFINITION.md](docs/PRODUCT_DEFINITION.md) and
 [SYSTEM_ARCHITECTURE.md](docs/SYSTEM_ARCHITECTURE.md). The inputs required for a
 real institutional pilot are in [PILOT_READINESS.md](docs/PILOT_READINESS.md).
+The current documentation map is in [docs/README.md](docs/README.md).
 The exact present-tense capability boundary and page visibility by role are in
 [CURRENT_CAPABILITIES.md](docs/CURRENT_CAPABILITIES.md). The staged path from
 this reference implementation to an institution-controlled environment is in

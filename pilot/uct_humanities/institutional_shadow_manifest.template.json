@@ -1,0 +1,125 @@
+{
+  "format_version": "1.0",
+  "mode": "INSTITUTIONAL_SHADOW",
+  "institution_name": "University of Cape Town",
+  "faculty_or_unit": "Faculty of Humanities",
+  "decision_name": "REPLACE_WITH_ONE_BOUNDED_SHADOW_DECISION",
+  "decision_statement": "REPLACE_WITH_ONE_SENTENCE_EXPLAINING_THE_NON_OPERATIVE_SHADOW_QUESTION_AND_THE_HUMAN_DECISION_OWNER.",
+  "out_of_scope": [
+    "No operative academic decision",
+    "No automatic communication to a student",
+    "No PeopleSoft, Amathuba, email, or workflow write-back",
+    "No external OCR or AI processing unless separately approved",
+    "No expansion beyond the named bounded decision without a new manifest"
+  ],
+  "sources": [
+    {
+      "reference": "REPLACE_WITH_AUTHORITATIVE_HANDBOOK_TITLE_EDITION_YEAR_AND_URL_OR_REGISTER_REFERENCE",
+      "kind": "POLICY_HANDBOOK",
+      "authoritative": false,
+      "effective_period_confirmed": false,
+      "version_confirmed": false
+    },
+    {
+      "reference": "REPLACE_WITH_APPROVED_AMENDMENT_OR_TRANSITION_RULE_REFERENCE_IF_ANY",
+      "kind": "POLICY_AMENDMENT",
+      "authoritative": false,
+      "effective_period_confirmed": false,
+      "version_confirmed": false
+    },
+    {
+      "reference": "REPLACE_WITH_APPROVED_DEIDENTIFIED_OR_CONSENTED_SHADOW_CASE_REFERENCE",
+      "kind": "RECORDED_OUTCOME",
+      "authoritative": false,
+      "effective_period_confirmed": true,
+      "version_confirmed": true
+    }
+  ],
+  "data_boundaries": [
+    {
+      "reference": "UCT public handbook source",
+      "basis": "PUBLIC_POLICY",
+      "contains_direct_identifiers": false,
+      "storage_boundary": "TENANT_CONTROLLED"
+    },
+    {
+      "reference": "REPLACE_WITH_PRIVACY_APPROVAL_OR_CONSENT_REFERENCE_FOR_SHADOW_CASES",
+      "basis": "APPROVED_DEIDENTIFIED",
+      "contains_direct_identifiers": false,
+      "storage_boundary": "TENANT_CONTROLLED",
+      "approval_reference": "REPLACE_WITH_PRIVACY_OR_CONSENT_REFERENCE"
+    }
+  ],
+  "gates": [
+    { "id": "bounded_decision", "accepted": false, "note": "UCT must name one decision only." },
+    { "id": "non_operative_use", "accepted": true, "note": "The shadow pilot cannot alter an institutional outcome." },
+    { "id": "policy_versioning", "accepted": false, "note": "UCT must confirm edition, amendments, effective dates, and transition rules." },
+    { "id": "source_provenance", "accepted": false, "note": "UCT must confirm the authoritative policy sources and citation convention." },
+    { "id": "transcript_minimisation", "accepted": false, "note": "UCT must approve the minimum data fields for any shadow cases." },
+    { "id": "human_review_route", "accepted": false, "note": "UCT must name how uncertainty, missing data, and exceptions are handled." },
+    { "id": "expected_cases", "accepted": false, "note": "UCT must approve representative shadow cases and expected outcomes." },
+    { "id": "no_repository_storage", "accepted": true, "note": "Real source files, case files, secrets, and reports do not enter Git." }
+  ],
+  "owners": [
+    { "role": "policy_owner", "name_or_office": "REPLACE_WITH_POLICY_OWNER_OFFICE_OR_PERSON", "confirmed": false, "note": "Confirms meaning, source authority, and effective dates." },
+    { "role": "release_approver", "name_or_office": "REPLACE_WITH_INDEPENDENT_APPROVER", "confirmed": false, "note": "Approves the compiled release and cannot be the author." },
+    { "role": "identity_owner", "name_or_office": "REPLACE_WITH_ICTS_IDENTITY_OWNER", "confirmed": false, "note": "Owns OIDC claims, test users, and revocation behavior." },
+    { "role": "privacy_security_lead", "name_or_office": "REPLACE_WITH_PRIVACY_SECURITY_OWNER", "confirmed": false, "note": "Approves data categories, hosting, incident path, and security review." },
+    { "role": "system_owner", "name_or_office": "REPLACE_WITH_PEOPLESOFT_OR_RECORD_OWNER", "confirmed": false, "note": "Owns source-system export boundaries and no-write-back confirmation." },
+    { "role": "student_support_lead", "name_or_office": "REPLACE_WITH_STUDENT_SUPPORT_OWNER", "confirmed": false, "note": "Owns explanation support and assisted/offline route." },
+    { "role": "appeals_owner", "name_or_office": "REPLACE_WITH_APPEALS_OR_REVIEW_OWNER", "confirmed": false, "note": "Defines review handoff for missing evidence or source errors." },
+    { "role": "deployment_owner", "name_or_office": "REPLACE_WITH_HOSTING_OR_DEPLOYMENT_OWNER", "confirmed": false, "note": "Owns non-production environment, logs, backups, and access." }
+  ],
+  "identity_plan": {
+    "status": "REQUESTED",
+    "issuer": "REPLACE_WITH_OIDC_ISSUER",
+    "audience": "REPLACE_WITH_OIDC_AUDIENCE",
+    "jwks_url": "REPLACE_WITH_JWKS_URL",
+    "tenant_claim": "REPLACE_WITH_TENANT_CLAIM",
+    "role_claim": "REPLACE_WITH_ROLE_CLAIM",
+    "domain_claim": "REPLACE_WITH_DOMAIN_CLAIM",
+    "subject_id_claim": "REPLACE_WITH_STABLE_SUBJECT_ID_CLAIM",
+    "test_identities_count": 0
+  },
+  "deployment_plan": {
+    "hosting_boundary": "INSTITUTION_APPROVED_NON_PRODUCTION",
+    "aws_account_status": "REQUESTED",
+    "terraform_state_status": "REQUESTED",
+    "database_boundary": "NOT_ASSIGNED",
+    "object_storage_boundary": "NOT_ASSIGNED",
+    "dns_tls_status": "REQUESTED",
+    "secrets_management_status": "REQUESTED",
+    "note": "REPLACE_WITH_APPROVED_HOSTING_ROUTE_AND_ACCOUNT_BOUNDARY"
+  },
+  "operational_controls": [
+    { "id": "retention_schedule", "status": "REQUESTED", "owner_reference": "REPLACE_WITH_OWNER", "approval_reference": null, "note": "Approve retention for sources, facts, traces, reports, and review cases." },
+    { "id": "object_immutability", "status": "REQUESTED", "owner_reference": "REPLACE_WITH_OWNER", "approval_reference": null, "note": "Approve versioning/Object Lock or equivalent write-once source protection." },
+    { "id": "backup_restore_test", "status": "REQUESTED", "owner_reference": "REPLACE_WITH_OWNER", "approval_reference": null, "note": "Approve backup retention and a restore rehearsal." },
+    { "id": "incident_contact", "status": "REQUESTED", "owner_reference": "REPLACE_WITH_OWNER", "approval_reference": null, "note": "Name security/privacy incident contact and escalation route." },
+    { "id": "accessibility_route", "status": "REQUESTED", "owner_reference": "REPLACE_WITH_OWNER", "approval_reference": null, "note": "Approve accessible explanation testing and assisted/offline route." },
+    { "id": "security_review", "status": "REQUESTED", "owner_reference": "REPLACE_WITH_OWNER", "approval_reference": null, "note": "Approve security review, vulnerability testing, and change-control route." },
+    { "id": "malware_scanning", "status": "REQUESTED", "owner_reference": "REPLACE_WITH_OWNER", "approval_reference": null, "note": "Approve malware/document safety scanning for uploaded policy sources." },
+    { "id": "monitoring_owner", "status": "REQUESTED", "owner_reference": "REPLACE_WITH_OWNER", "approval_reference": null, "note": "Name owner for logs, alerts, queue failures, and support response." }
+  ],
+  "integrations": [
+    {
+      "system_name": "PeopleSoft",
+      "integration_type": "MANUAL_MINIMISED_EXPORT",
+      "status": "REQUESTED",
+      "owner_reference": "REPLACE_WITH_SYSTEM_OWNER",
+      "schema_or_export_reference": "REPLACE_WITH_EXPORT_SCHEMA_OR_FIELD_LIST",
+      "note": "Manual minimised export or approved CSV shape only. No write-back."
+    },
+    {
+      "system_name": "Amathuba",
+      "integration_type": "NONE",
+      "status": "NOT_REQUESTED",
+      "owner_reference": "REPLACE_WITH_SYSTEM_OWNER_IF_INCLUDED",
+      "schema_or_export_reference": null,
+      "note": "Include only if DP, coursework, attendance, or assessment data is inside the bounded decision."
+    }
+  ],
+  "external_ocr_enabled": false,
+  "external_ai_enabled": false,
+  "external_processing_approval_reference": null
+}

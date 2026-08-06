@@ -1,0 +1,8 @@
+# Copy to backend.hcl (which is gitignored) and replace every value with
+# institution-owned infrastructure. The state bucket must have versioning,
+# encryption, restricted access, and a documented recovery owner.
+bucket       = "institution-ire-terraform-state"
+key          = "staging/terraform.tfstate"
+region       = "af-south-1"
+encrypt      = true
+use_lockfile = true

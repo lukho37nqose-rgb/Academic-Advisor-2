@@ -1,4 +1,5 @@
 import time
+from datetime import datetime, timedelta, timezone
 
 import jwt
 import pytest
@@ -27,7 +28,7 @@ def test_development_hs256_token_maps_ire_identity_claims(monkeypatch):
         {
             "sub": "user_1",
             "tenant_id": "tenant_1",
-            "role": "metadata_steward",
+            "role": "staff_member",
             "domain_ids": ["dom_1"],
             "exp": int(time.time()) + 300,
         },
@@ -39,7 +40,7 @@ def test_development_hs256_token_maps_ire_identity_claims(monkeypatch):
 
     assert identity.user_id == "user_1"
     assert identity.tenant_id == "tenant_1"
-    assert identity.role == Role.METADATA_STEWARD
+    assert identity.role == Role.STAFF_MEMBER
     assert identity.subject_id == "user_1"
     assert identity.domain_ids == ["dom_1"]
 
@@ -83,6 +84,41 @@ def test_staff_token_does_not_need_the_subject_claim(monkeypatch):
 
     assert identity.user_id == "staff_1"
     assert identity.subject_id is None
+
+
+def test_time_bounded_delegation_keeps_the_real_actor_and_scopes_domains(monkeypatch):
+    secret = "development-secret-that-is-long-enough-for-hs256"
+    monkeypatch.setenv("IRE_ENV", "development")
+    monkeypatch.setenv("JWT_SECRET_KEY", secret)
+    monkeypatch.delenv("JWT_JWKS_URL", raising=False)
+    token = jwt.encode({
+        "sub": "acting_staff_1", "tenant_id": "tenant_1", "role": "staff_member", "domain_ids": ["dom_home"],
+        "ire_delegation": {"role": "approver", "domain_ids": ["dom_coverage"], "acting_for": "faculty_office", "expires_at": (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()},
+        "exp": int(time.time()) + 300,
+    }, secret, algorithm="HS256")
+
+    identity = get_current_user(_credentials(token))
+
+    assert identity.user_id == "acting_staff_1"
+    assert identity.role == Role.APPROVER
+    assert identity.domain_ids == ["dom_coverage"]
+    assert identity.acting_for == "faculty_office"
+
+
+def test_expired_delegation_is_rejected(monkeypatch):
+    secret = "development-secret-that-is-long-enough-for-hs256"
+    monkeypatch.setenv("IRE_ENV", "development")
+    monkeypatch.setenv("JWT_SECRET_KEY", secret)
+    token = jwt.encode({
+        "sub": "acting_staff_1", "tenant_id": "tenant_1", "role": "staff_member", "domain_ids": ["dom_home"],
+        "ire_delegation": {"role": "approver", "domain_ids": ["dom_coverage"], "acting_for": "faculty_office", "expires_at": "2020-01-01T00:00:00Z"},
+        "exp": int(time.time()) + 300,
+    }, secret, algorithm="HS256")
+
+    with pytest.raises(HTTPException) as error:
+        get_current_user(_credentials(token))
+
+    assert error.value.status_code == 401
 
 
 def test_production_refuses_shared_secret_authentication(monkeypatch):

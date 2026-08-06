@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import logging
 import os
 import socket
 from dataclasses import dataclass
@@ -18,6 +19,12 @@ from typing import Literal, cast
 from app.infrastructure.database import AsyncSessionLocal
 from app.infrastructure.db import DBBackgroundJob
 from app.infrastructure.repositories import BackgroundJobRepository, HandbookRepository
+from app.services.background_job_signals import (
+    BackgroundJobSignalError,
+    delete_background_job_signal,
+    receive_background_job_signals,
+    signal_queue_configured,
+)
 from app.services.handbook_ocr_worker import process_handbook_ocr
 from app.services.handbook_worker import process_handbook_upload
 from app.services.tenant_context import production_background_scope_required, tenant_scope
@@ -25,6 +32,9 @@ from app.services.tenant_context import production_background_scope_required, te
 
 class BackgroundJobExecutionError(RuntimeError):
     """Raised when a worker handler cannot establish a safe terminal result."""
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -184,6 +194,22 @@ async def run_worker(tenant_ids: tuple[str, ...], *, once: bool = False) -> None
         raise RuntimeError("At least one explicit tenant identifier is required for durable worker execution.")
     while True:
         processed = False
+        if signal_queue_configured() and not once:
+            try:
+                signals = await receive_background_job_signals(
+                    allowed_tenant_ids=set(tenant_ids),
+                    wait_seconds=background_job_poll_seconds(),
+                )
+            except BackgroundJobSignalError as exc:
+                logger.warning("Background job signal receive failed: %s", exc)
+                signals = []
+            for signal in signals:
+                result = await process_next_background_job(signal.tenant_id)
+                processed = processed or result is not None
+                try:
+                    await delete_background_job_signal(signal.receipt_handle)
+                except BackgroundJobSignalError as exc:
+                    logger.warning("Background job signal delete failed for %s: %s", signal.job_id, exc)
         for tenant_id in tenant_ids:
             result = await process_next_background_job(tenant_id)
             processed = processed or result is not None

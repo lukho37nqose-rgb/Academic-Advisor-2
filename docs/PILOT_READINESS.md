@@ -8,7 +8,7 @@ and institutional sign-off required before a real source or record is used.
 The controls are tenant-neutral and must be adapted for every future
 institution.
 
-The next phase is not a broader demo. It is a bounded test of whether the IRE
+The next phase is not a broader reference demonstration. It is a bounded test of whether the IRE
 can represent one real institutional decision faithfully and explain it to the
 people affected by it.
 
@@ -18,12 +18,12 @@ The repository now includes a fully synthetic rehearsal pack under
 [`pilot/synthetic/`](../pilot/synthetic/). It runs a fictional policy and
 fictional subject facts through the same compiler and evaluator used for a
 release. It proves the expected approval, threshold failure, missing-evidence
-failure, and human-review routing paths, and retains canonical SHA-256 evidence
+human-review, and ambiguity-routing paths, and retains canonical SHA-256 evidence
 for each case.
 
 This is useful for engineering regression control and a dry-run of the pilot
 method. The staff workspace also supports an independently certified
-shadow-calibration suite for the same purpose without requiring an institution
+outcome-calibration suite for the same purpose without requiring an institution
 to prepare JSON or write code. It is not evidence that any real policy has been
 modelled correctly. A real corpus and historical outcomes remain institutional
 inputs, subject to the controls below.
@@ -32,7 +32,7 @@ inputs, subject to the controls below.
 
 1. A bounded decision: for example, one programme progression determination or
    one grant eligibility decision.
-2. A named policy owner and a separate release approver.
+2. A named policy editor and a separate approver.
 3. The authoritative policy corpus, including amendments, effective dates,
    superseded versions, and source citations.
 4. A privacy-approved set of synthetic representative cases or de-identified
@@ -41,9 +41,18 @@ inputs, subject to the controls below.
 5. A written definition of the subject, tenant, and domain access boundaries.
 6. An OIDC application registration that supplies an issuer, audience, JWKS URL,
    and claims for tenant, role, and domain assignments.
-7. A named institutional records steward, a separate context certifier, and an
+7. Named staff members, a separate approver for context certification, and an
    approved source-reference convention for any concessions, appeals, curriculum
    applicability decisions, or assessment accommodations included in a timeline.
+
+These inputs are now represented in the local preflight manifest schema. For
+UCT Humanities preparation, use
+[`pilot/uct_humanities/pilot_manifest.template.json`](../pilot/uct_humanities/pilot_manifest.template.json)
+for local rehearsal and
+[`pilot/uct_humanities/institutional_shadow_manifest.template.json`](../pilot/uct_humanities/institutional_shadow_manifest.template.json)
+for UCT-controlled non-production validation. Completed manifests must stay
+outside Git because they may contain owners, approval references, source
+locations, and environment details.
 
 ## Large Document Acceptance Criteria
 
@@ -67,7 +76,7 @@ The pilot is successful only when the policy owner can reproduce a sample of
 known decisions using a signed release, explain each outcome through the stored
 evidence, claims, facts, and rule citations, and identify every disagreement as
 either a source-data problem, policy-model problem, or governance decision.
-The comparison must be recorded as a shadow-calibration report before any
+The comparison must be recorded as an outcome-calibration report before any
 operative use is considered.
 
 Where institutional context is included, the subject view must be checked

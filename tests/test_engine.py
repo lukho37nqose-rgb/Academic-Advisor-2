@@ -49,7 +49,7 @@ def test_engine_evaluates_failing_logical_and(base_context: EvaluationContext):
     assert conclusion.data["overall_passed"] is False
 
 
-def test_engine_fails_closed_on_missing_data(base_context: EvaluationContext):
+def test_engine_routes_missing_data_to_manual_review(base_context: EvaluationContext):
     builder = DomainBuilder("Test Domain").require(Rule("target.value").gte(10))
     rule_graph = compile_release_to_graph("rel_1", builder.compile())
     
@@ -58,8 +58,8 @@ def test_engine_fails_closed_on_missing_data(base_context: EvaluationContext):
     reasoning_graph = generate_reasoning_graph(base_context, rule_graph, facts)
     
     conclusion = next(n for n in reasoning_graph.nodes.values() if n.type == "conclusion")
-    assert conclusion.data["overall_passed"] is False
-    assert conclusion.computed_confidence == 0.0 # Proves the fail-closed confidence zeroing
+    assert conclusion.data["overall_passed"] == "NEEDS_MANUAL_REVIEW"
+    assert conclusion.computed_confidence == 0.0
 
 def test_engine_evaluates_grant_max_budget_rule(base_context: EvaluationContext):
     """
@@ -105,3 +105,15 @@ def test_ambiguity_protocol_halts_evaluation(base_context: EvaluationContext):
     # The rule evaluator should recognize the 'needs_human_review' sentinel
     # and propagate it to the conclusion rather than strictly failing.
     assert conclusion.data["overall_passed"] == "NEEDS_MANUAL_REVIEW"
+
+
+def test_engine_rejects_duplicate_fact_targets(base_context: EvaluationContext):
+    builder = DomainBuilder("Test Domain").require(Rule("target.value").gte(10))
+    rule_graph = compile_release_to_graph("rel_1", builder.compile())
+    facts = [
+        Fact(target_path="target.value", resolved_value=10, final_confidence=1.0),
+        Fact(target_path="target.value", resolved_value=20, final_confidence=1.0),
+    ]
+
+    with pytest.raises(ValueError, match="Multiple facts"):
+        generate_reasoning_graph(base_context, rule_graph, facts)

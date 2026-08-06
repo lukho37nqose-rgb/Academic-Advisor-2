@@ -1,9 +1,7 @@
-"""
-Evidence Adapters.
+"""Evidence adapters for bounded ingestion surfaces.
 
-Proves the architecture is not a monolithic application but a headless engine.
-External systems (ERPs, CSV uploads, REST APIs) use Adapters to transform 
-their native data formats into our canonical `Evidence` model.
+External systems, approved CSV exports, and small reference-text submissions use
+adapters to transform source payloads into the canonical `Evidence` model.
 """
 
 from abc import ABC, abstractmethod
@@ -42,19 +40,18 @@ class RawTextAdapter(EvidenceAdapter):
             source_type="user_input",
             storage_key=storage_key,
             cryptographic_hash=content_hash,
-            timestamp=datetime.datetime.now(datetime.timezone.utc).isoformat()
+            timestamp=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            source_authority="official_system",
+            record_state="confirmed",
         )
 
 
-class LegacyERPAdapter(EvidenceAdapter):
-    """
-    Mock adapter representing an integration with a legacy system like PeopleSoft or Banner.
-    It takes structured JSON from the ERP API and spools it to BlobStorage.
-    """
+class SystemRecordPayloadAdapter(EvidenceAdapter):
+    """Adapter for structured records from an approved system-of-record mapping."""
     
     async def ingest(self, *, tenant_id: str, subject_id: str, raw_payload: Dict[str, Any]) -> Evidence:
         if not isinstance(raw_payload, dict):
-            raise ValueError("LegacyERPAdapter expects a JSON dictionary payload.")
+            raise ValueError("SystemRecordPayloadAdapter expects a JSON dictionary payload.")
             
         import json
         stringified_content = json.dumps(raw_payload, sort_keys=True)
@@ -69,7 +66,7 @@ class LegacyERPAdapter(EvidenceAdapter):
         # We set a high trust level implicitly because it comes from an API
         return Evidence(
             subject_id=subject_id,
-            source_type="erp_system",
+            source_type="system_record_export",
             storage_key=storage_key,
             cryptographic_hash=content_hash,
             timestamp=datetime.datetime.now(datetime.timezone.utc).isoformat()

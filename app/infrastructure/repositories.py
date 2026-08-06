@@ -9,14 +9,15 @@ from dataclasses import dataclass
 from typing import Optional, Dict, Any, List, cast
 import hashlib
 import json
+import logging
 import uuid
 from datetime import date, datetime, timedelta, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import delete, func, text
+from sqlalchemy import delete, func, text, exists
 from sqlalchemy.future import select
 from sqlalchemy.exc import IntegrityError
 
-from app.core.models import Claim, Evidence, Fact, GraphEdge, GraphNode, ReasoningGraph, Release, RuleGraph
+from app.core.models import Claim, Evidence, Fact, GraphEdge, GraphNode, ReasoningGraph, Release, RuleGraph, WorkflowRule
 from app.infrastructure.db import (
     DBClaim,
     DBBackgroundJob,
@@ -30,6 +31,7 @@ from app.infrastructure.db import (
     DBMetadataOverride,
     DBSystemRecordImportMapping,
     DBSystemRecordImportMappingEvent,
+    DBInstitutionalDataSource,
     DBShadowCalibrationCase,
     DBShadowCalibrationFinding,
     DBShadowCalibrationRun,
@@ -38,7 +40,10 @@ from app.infrastructure.db import (
     DBRelease,
     DBRuleGraph,
     DBReasoningGraph,
+    DBReasoningGraphDeletionEvent,
     DBEvidence,
+    DBEvidenceDeletionEvent,
+    DBFactSupersessionEvent,
     DBPolicyDraft,
     DBPolicyAmbiguity,
     DBPolicyAmbiguityEvent,
@@ -52,26 +57,37 @@ from app.infrastructure.db import (
     DBSupportRequest,
     DBSupportRequestEvent,
     DBTenant,
+    DBProviderTenantControl,
+    DBProviderSupportAccessRequest,
+    DBWorkflowOutbox,
 )
 from app.core.compiler import build_expression_tree
 from app.services.access_controls import (
     decision_review_response_due_at,
+    casework_routing,
     decision_review_retention_days,
     response_due_at,
     support_request_retention_days,
 )
+from app.services.background_job_signals import BackgroundJobSignalError, publish_background_job_signal
 
 
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
 class PolicyDraft:
     """Plain data carrier for a fetched draft row -- not persisted directly."""
-    def __init__(self, id, tenant_id, domain_id, policy_name, author_id, payload, status):
-        self.id = id
-        self.tenant_id = tenant_id
-        self.domain_id = domain_id
-        self.policy_name = policy_name
-        self.author_id = author_id
-        self.payload = payload
-        self.status = status
+
+    id: str
+    tenant_id: str
+    domain_id: str
+    policy_name: str
+    author_id: str
+    payload: dict[str, Any]
+    status: str
+    approved_by: str | None = None
+    approved_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -177,6 +193,20 @@ class ShadowCalibrationConflictError(ValueError):
 
 class InstitutionalContextEventConflictError(ValueError):
     """Raised when an institutional-history record violates its governance lifecycle."""
+
+
+def _domain_presentation(schema_definition: dict[str, Any]) -> dict[str, str]:
+    presentation = schema_definition.get("presentation", {})
+    presentation = presentation if isinstance(presentation, dict) else {}
+
+    def _label(key: str, default: str) -> str:
+        value = presentation.get(key)
+        return value.strip() if isinstance(value, str) and value.strip() else default
+
+    return {
+        "governed_person_label": _label("governed_person_label", "person"),
+        "position_collection_label": _label("position_collection_label", "current positions"),
+    }
 
 
 class MetadataGovernanceRepository:
@@ -337,6 +367,87 @@ class MetadataGovernanceRepository:
         ]
 
 
+class ProviderOperationsRepository:
+    """Provider control-plane metadata only; never queries tenant casework or records."""
+
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    @staticmethod
+    def _tenant_payload(control: DBProviderTenantControl, tenant: DBTenant) -> dict[str, Any]:
+        return {
+            "tenant_id": cast(str, tenant.id),
+            "tenant_name": cast(str, tenant.name),
+            "lifecycle_state": cast(str, control.lifecycle_state),
+            "service_tier": cast(str, control.service_tier),
+            "integration_status": cast(str, control.integration_status),
+            "integration_observed_at": control.integration_observed_at.isoformat() if control.integration_observed_at else None,
+            "created_at": control.created_at.isoformat() if control.created_at else None,
+            "updated_at": control.updated_at.isoformat() if control.updated_at else None,
+        }
+
+    async def list_tenants(self) -> list[dict[str, Any]]:
+        result = await self.session.execute(
+            select(DBProviderTenantControl, DBTenant)
+            .join(DBTenant, DBTenant.id == DBProviderTenantControl.tenant_id)
+            .order_by(DBTenant.name)
+        )
+        return [self._tenant_payload(control, tenant) for control, tenant in result.all()]
+
+    async def provision_tenant(self, *, tenant_id: str, tenant_name: str, actor_id: str) -> dict[str, Any]:
+        if await self.session.get(DBTenant, tenant_id) is not None:
+            raise ValueError("Tenant identifier already exists.")
+        tenant = DBTenant(id=tenant_id, name=tenant_name)
+        control = DBProviderTenantControl(
+            tenant_id=tenant_id,
+            lifecycle_state="PILOT",
+            service_tier="pilot",
+            integration_status="NOT_CONFIGURED",
+            created_by=actor_id,
+            updated_by=actor_id,
+        )
+        self.session.add(tenant)
+        self.session.add(control)
+        try:
+            await self.session.commit()
+            await self.session.refresh(tenant)
+            await self.session.refresh(control)
+        except IntegrityError as exc:
+            await self.session.rollback()
+            raise ValueError("Tenant provisioning conflicted with an existing record.") from exc
+        return self._tenant_payload(control, tenant)
+
+    async def update_lifecycle(self, *, tenant_id: str, lifecycle_state: str, actor_id: str) -> dict[str, Any] | None:
+        control = await self.session.get(DBProviderTenantControl, tenant_id)
+        tenant = await self.session.get(DBTenant, tenant_id)
+        if control is None or tenant is None:
+            return None
+        setattr(control, "lifecycle_state", lifecycle_state)
+        setattr(control, "updated_by", actor_id)
+        await self.session.commit()
+        await self.session.refresh(control)
+        return self._tenant_payload(control, tenant)
+
+    async def request_support_access(self, *, tenant_id: str, actor_id: str, reason: str) -> dict[str, Any] | None:
+        if await self.session.get(DBProviderTenantControl, tenant_id) is None:
+            return None
+        request = DBProviderSupportAccessRequest(
+            id="provider_support_" + uuid.uuid4().hex,
+            tenant_id=tenant_id,
+            requested_by=actor_id,
+            reason=reason,
+            status="REQUESTED",
+        )
+        self.session.add(request)
+        await self.session.commit()
+        return {
+            "request_id": cast(str, request.id),
+            "tenant_id": tenant_id,
+            "status": "REQUESTED",
+            "created_at": request.created_at.isoformat() if request.created_at else None,
+        }
+
+
 class InstitutionalInputRepository:
     """Creates a tenant domain and its first policy draft in one transaction."""
 
@@ -381,6 +492,8 @@ class InstitutionalInputRepository:
                 author_id=author_id,
                 payload=policy_payload,
                 status="PENDING",
+                approved_by=None,
+                approved_at=None,
             )
         )
         try:
@@ -441,6 +554,79 @@ class InstitutionalInputRepository:
             if isinstance(value, dict)
         ]
 
+    async def get_domain_schema(self, *, tenant_id: str, domain_id: str) -> dict[str, Any] | None:
+        domain = (await self.session.execute(select(DBDomain).where(
+            DBDomain.id == domain_id, DBDomain.tenant_id == tenant_id,
+        ))).scalar_one_or_none()
+        return cast(dict[str, Any], domain.schema_definition) if domain is not None else None
+
+
+class InstitutionalDataSourceRepository:
+    """Stores source declarations; source credentials and records never enter this registry."""
+
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    @staticmethod
+    def _payload(row: DBInstitutionalDataSource) -> dict[str, Any]:
+        return {
+            "source_id": cast(str, row.id), "domain_id": cast(str, row.domain_id),
+            "display_name": cast(str, row.display_name), "source_kind": cast(str, row.source_kind),
+            "authority_level": cast(str, row.authority_level), "source_owner": cast(str, row.source_owner),
+            "expected_refresh_hours": cast(Optional[int], row.expected_refresh_hours),
+            "source_reference": cast(Optional[str], row.source_reference), "author_id": cast(str, row.author_id),
+            "connector_kind": cast(str, row.connector_kind),
+            "credential_reference": cast(Optional[str], row.credential_reference),
+            "endpoint_reference": cast(Optional[str], row.endpoint_reference),
+            "allowed_object": cast(Optional[str], row.allowed_object),
+            "connector_status": cast(str, row.connector_status),
+            "connector_last_checked_at": row.connector_last_checked_at.isoformat() if row.connector_last_checked_at else None,
+            "status": cast(str, row.status), "reviewed_by": cast(Optional[str], row.reviewed_by),
+            "reviewed_at": row.reviewed_at.isoformat() if row.reviewed_at else None,
+            "review_note": cast(Optional[str], row.review_note),
+        }
+
+    async def create(self, *, source_id: str, tenant_id: str, domain_id: str, author_id: str, **values: Any) -> dict[str, Any]:
+        row = DBInstitutionalDataSource(id=source_id, tenant_id=tenant_id, domain_id=domain_id, author_id=author_id, status="PENDING", **values)
+        self.session.add(row)
+        await self.session.commit()
+        await self.session.refresh(row)
+        return self._payload(row)
+
+    async def list_for_domain(self, *, tenant_id: str, domain_id: str) -> list[dict[str, Any]]:
+        result = await self.session.execute(select(DBInstitutionalDataSource).where(
+            DBInstitutionalDataSource.tenant_id == tenant_id, DBInstitutionalDataSource.domain_id == domain_id,
+        ).order_by(DBInstitutionalDataSource.created_at.desc(), DBInstitutionalDataSource.id))
+        return [self._payload(row) for row in result.scalars().all()]
+
+    async def get(self, *, source_id: str, tenant_id: str, domain_id: str) -> Optional[dict[str, Any]]:
+        row = (await self.session.execute(select(DBInstitutionalDataSource).where(
+            DBInstitutionalDataSource.id == source_id, DBInstitutionalDataSource.tenant_id == tenant_id,
+            DBInstitutionalDataSource.domain_id == domain_id,
+        ))).scalars().first()
+        return self._payload(row) if row else None
+
+    async def review(self, *, source_id: str, tenant_id: str, domain_id: str, reviewer_id: str, approved: bool, note: Optional[str]) -> Optional[dict[str, Any]]:
+        row = (await self.session.execute(select(DBInstitutionalDataSource).where(
+            DBInstitutionalDataSource.id == source_id, DBInstitutionalDataSource.tenant_id == tenant_id,
+            DBInstitutionalDataSource.domain_id == domain_id,
+        ).with_for_update())).scalars().first()
+        if not row:
+            return None
+        if row.status != "PENDING":
+            raise SystemRecordImportMappingConflictError("This source declaration has already been reviewed.")
+        if row.author_id == reviewer_id:
+            raise SystemRecordImportMappingConflictError("Separation of duties violation: the source author cannot review their own declaration.")
+        if not approved and not note:
+            raise SystemRecordImportMappingConflictError("A rejection reason is required.")
+        setattr(row, "status", "APPROVED" if approved else "REJECTED")
+        setattr(row, "reviewed_by", reviewer_id)
+        setattr(row, "reviewed_at", datetime.now(timezone.utc))
+        setattr(row, "review_note", note)
+        await self.session.commit()
+        await self.session.refresh(row)
+        return self._payload(row)
+
 
 class SystemRecordImportMappingRepository:
     """Stores reviewed mapping configuration, never the CSV or subject values."""
@@ -454,6 +640,7 @@ class SystemRecordImportMappingRepository:
             "mapping_id": cast(str, record.id),
             "domain_id": cast(str, record.domain_id),
             "mapping_name": cast(str, record.mapping_name),
+            "source_id": cast(Optional[str], record.source_id),
             "source_system": cast(str, record.source_system),
             "contract": cast(dict[str, Any], record.contract),
             "contract_sha256": cast(str, record.contract_sha256),
@@ -473,6 +660,7 @@ class SystemRecordImportMappingRepository:
         domain_id: str,
         mapping_name: str,
         source_system: str,
+        source_id: Optional[str] = None,
         contract: dict[str, Any],
         contract_sha256: str,
         author_id: str,
@@ -482,6 +670,7 @@ class SystemRecordImportMappingRepository:
             tenant_id=tenant_id,
             domain_id=domain_id,
             mapping_name=mapping_name,
+            source_id=source_id,
             source_system=source_system,
             contract=contract,
             contract_sha256=contract_sha256,
@@ -1524,7 +1713,13 @@ class BackgroundJobRepository:
         )
         existing = existing_result.scalars().first()
         if existing is not None:
-            return self._summary(existing)
+            summary = self._summary(existing)
+            if summary["status"] == "QUEUED":
+                try:
+                    await publish_background_job_signal(summary)
+                except BackgroundJobSignalError as exc:
+                    logger.warning("Background job signal publish failed for existing job %s: %s", summary["job_id"], exc)
+            return summary
 
         job = DBBackgroundJob(
             id=f"job_{uuid.uuid4().hex}",
@@ -1553,7 +1748,12 @@ class BackgroundJobRepository:
             if existing is not None:
                 return self._summary(existing)
             raise BackgroundJobConflictError("The durable job could not be queued.") from exc
-        return self._summary(job)
+        summary = self._summary(job)
+        try:
+            await publish_background_job_signal(summary)
+        except BackgroundJobSignalError as exc:
+            logger.warning("Background job signal publish failed for job %s: %s", summary["job_id"], exc)
+        return summary
 
     async def claim_next(
         self,
@@ -1917,6 +2117,8 @@ class HandbookRepository:
                 "page_number": cast(int, page.page_number),
                 "text_content": cast(str, page.text_content),
                 "content_hash": cast(str, page.content_hash),
+                "extraction_kind": cast(str, page.extraction_kind),
+                "review_priority": cast(str, page.review_priority),
             }
             for page in result.scalars().all()
         ]
@@ -1928,8 +2130,14 @@ class HandbookRepository:
             "page_number": cast(int, review.page_number),
             "provider_name": cast(str, review.provider_name),
             "provider_reference": cast(Optional[str], review.provider_reference),
+            "provider_model_version": cast(Optional[str], review.provider_model_version),
+            "provider_response_hash": cast(Optional[str], review.provider_response_hash),
+            "source_page_hash": cast(str, review.source_page_hash),
             "proposed_text": cast(str, review.proposed_text),
             "proposed_text_hash": cast(str, review.proposed_text_hash),
+            "proposed_blocks": cast(Optional[list[dict[str, Any]]], review.proposed_blocks),
+            "quality_signals": cast(Optional[dict[str, Any]], review.quality_signals),
+            "review_priority": cast(str, review.review_priority),
             "status": cast(str, review.status),
             "reviewed_text": cast(Optional[str], review.reviewed_text),
             "reviewed_by": cast(Optional[str], review.reviewed_by),
@@ -1998,6 +2206,12 @@ class HandbookRepository:
         provider_name: str,
         provider_reference: Optional[str],
         proposed_text: str,
+        provider_model_version: Optional[str],
+        provider_response_hash: str,
+        source_page_hash: str,
+        proposed_blocks: list[dict[str, object]],
+        quality_signals: dict[str, object],
+        review_priority: str,
         commit: bool = True,
     ) -> None:
         review_id = f"handbook_ocr_review_{handbook_id}_{page_number}"
@@ -2012,8 +2226,14 @@ class HandbookRepository:
             page_number=page_number,
             provider_name=provider_name,
             provider_reference=provider_reference,
+            provider_model_version=provider_model_version,
+            provider_response_hash=provider_response_hash,
+            source_page_hash=source_page_hash,
             proposed_text=proposed_text,
             proposed_text_hash=proposed_hash,
+            proposed_blocks=proposed_blocks,
+            quality_signals=quality_signals,
+            review_priority=review_priority,
             status="PENDING_REVIEW",
         )
         self.session.add(review)
@@ -2115,6 +2335,7 @@ class HandbookRepository:
                 raise HandbookUploadConflictError("Handbook page was not found.")
             setattr(page, "text_content", final_text)
             setattr(page, "content_hash", final_hash)
+            setattr(page, "extraction_kind", "OCR_REVIEWED")
             upload = await self.session.get(DBHandbookUpload, handbook_id)
             if upload is None:
                 raise HandbookUploadConflictError("Handbook source was not found.")
@@ -2162,7 +2383,16 @@ class HandbookRepository:
         setattr(upload, "total_pages", total_pages)
         await self.session.commit()
 
-    async def save_page(self, *, handbook_id: str, page_number: int, text_content: str, content_hash: str) -> None:
+    async def save_page(
+        self,
+        *,
+        handbook_id: str,
+        page_number: int,
+        text_content: str,
+        content_hash: str,
+        extraction_kind: str = "SELECTABLE_TEXT",
+        review_priority: str = "NORMAL",
+    ) -> None:
         page_id = f"handbook_page_{handbook_id}_{page_number}"
         page = await self.session.get(DBHandbookPage, page_id)
         if page is None:
@@ -2173,11 +2403,15 @@ class HandbookRepository:
                     page_number=page_number,
                     text_content=text_content,
                     content_hash=content_hash,
+                    extraction_kind=extraction_kind,
+                    review_priority=review_priority,
                 )
             )
         else:
             setattr(page, "text_content", text_content)
             setattr(page, "content_hash", content_hash)
+            setattr(page, "extraction_kind", extraction_kind)
+            setattr(page, "review_priority", review_priority)
         upload = await self.session.get(DBHandbookUpload, handbook_id)
         if upload is None:
             raise HandbookUploadConflictError("Handbook upload was not found.")
@@ -2244,6 +2478,7 @@ class PublicAccessRepository:
     @classmethod
     def _support_request_payload(cls, row: DBSupportRequest) -> dict[str, Any]:
         due_at = cls._as_utc(cast(Optional[datetime], row.response_due_at))
+        escalation_due_at = cls._as_utc(cast(Optional[datetime], row.escalation_due_at))
         return {
             "id": cast(str, row.id),
             "domain_id": cast(str, row.domain_id),
@@ -2252,6 +2487,10 @@ class PublicAccessRepository:
             "message": cast(str, row.message),
             "status": cast(str, row.status),
             "response_due_at": due_at.isoformat() if due_at else None,
+            "responsible_group": cast(Optional[str], row.responsible_group),
+            "fallback_group": cast(Optional[str], row.fallback_group),
+            "escalation_due_at": escalation_due_at.isoformat() if escalation_due_at else None,
+            "is_escalated": bool(escalation_due_at and row.status != "CLOSED" and escalation_due_at < datetime.now(timezone.utc)),
             "closed_at": row.closed_at.isoformat() if row.closed_at else None,
             "retention_expires_at": row.retention_expires_at.isoformat() if row.retention_expires_at else None,
             "is_overdue": bool(
@@ -2341,10 +2580,14 @@ class PublicAccessRepository:
     async def get_public_policy_guide(self, domain_id: str, version: Optional[str] = None) -> dict[str, Any]:
         domain, release, graph = await self._approved_release(domain_id, version)
         root = cast(dict[str, Any], graph.compiled_bytecode)
+        schema = cast(dict[str, Any], domain.schema_definition)
+        presentation = _domain_presentation(schema)
         return {
             "domain_id": cast(str, domain.id),
             "domain_name": cast(str, domain.name),
             "version": cast(str, release.version),
+            "governed_person_label": presentation["governed_person_label"],
+            "position_collection_label": presentation["position_collection_label"],
             "policy": self._guide_node(root, self._fact_labels(domain)),
             "assistance_requests_enabled": bool(self._access_settings(domain).get("assistance_requests_enabled", False)),
             "support_response_target_hours": self._access_settings(domain).get("support_response_target_hours"),
@@ -2365,6 +2608,7 @@ class PublicAccessRepository:
         if not self._access_settings(domain).get("assistance_requests_enabled", False):
             raise PublicPolicyUnavailableError("Human assistance requests are not enabled for this policy.")
         due_at = response_due_at(self._access_settings(domain))
+        primary_group, fallback_group, escalation_due_at = casework_routing(cast(dict[str, object], domain.schema_definition))
         self.session.add(
             DBSupportRequest(
                 id=request_id,
@@ -2375,6 +2619,9 @@ class PublicAccessRepository:
                 message=message,
                 status="OPEN",
                 response_due_at=due_at,
+                responsible_group=primary_group,
+                fallback_group=fallback_group,
+                escalation_due_at=escalation_due_at,
             )
         )
         self.session.add(
@@ -2545,6 +2792,7 @@ class DecisionReviewRepository:
     @classmethod
     def _case_payload(cls, row: DBDecisionReviewCase) -> dict[str, Any]:
         due_at = cls._as_utc(cast(Optional[datetime], row.response_due_at))
+        escalation_due_at = cls._as_utc(cast(Optional[datetime], row.escalation_due_at))
         return {
             "id": cast(str, row.id),
             "domain_id": cast(str, row.domain_id),
@@ -2558,6 +2806,10 @@ class DecisionReviewRepository:
             "resolution": cast(Optional[str], row.resolution),
             "response_message": cast(Optional[str], row.response_message),
             "response_due_at": due_at.isoformat() if due_at else None,
+            "responsible_group": cast(Optional[str], row.responsible_group),
+            "fallback_group": cast(Optional[str], row.fallback_group),
+            "escalation_due_at": escalation_due_at.isoformat() if escalation_due_at else None,
+            "is_escalated": bool(escalation_due_at and row.status not in {"RESOLVED", "CLOSED"} and escalation_due_at < datetime.now(timezone.utc)),
             "resolved_at": row.resolved_at.isoformat() if row.resolved_at else None,
             "closed_at": row.closed_at.isoformat() if row.closed_at else None,
             "retention_expires_at": row.retention_expires_at.isoformat() if row.retention_expires_at else None,
@@ -2591,6 +2843,7 @@ class DecisionReviewRepository:
         due_at = decision_review_response_due_at(access_settings)
         if due_at is None:
             raise DecisionReviewUnavailableError("Decision review has no configured response commitment.")
+        primary_group, fallback_group, escalation_due_at = casework_routing(cast(dict[str, object], domain.schema_definition))
 
         review_case = DBDecisionReviewCase(
             id=case_id,
@@ -2604,6 +2857,9 @@ class DecisionReviewRepository:
             submitted_evidence_ids=submitted_evidence_ids,
             status="SUBMITTED",
             response_due_at=due_at,
+            responsible_group=primary_group,
+            fallback_group=fallback_group,
+            escalation_due_at=escalation_due_at,
         )
         self.session.add(review_case)
         self.session.add(
@@ -2796,6 +3052,7 @@ class PolicyAmbiguityRepository:
             "source_citation": cast(str, row.source_citation),
             "question": cast(str, row.question),
             "interpretation_options": cast(list[str], row.interpretation_options),
+            "affected_target_paths": cast(list[str], row.affected_target_paths or []),
             "status": cast(str, row.status),
             "resolution": cast(Optional[str], row.resolution),
             "resolution_source_reference": cast(Optional[str], row.resolution_source_reference),
@@ -2815,6 +3072,7 @@ class PolicyAmbiguityRepository:
         source_citation: str,
         question: str,
         interpretation_options: list[str],
+        affected_target_paths: list[str],
         created_by: str,
     ) -> dict[str, Any]:
         record = DBPolicyAmbiguity(
@@ -2824,6 +3082,7 @@ class PolicyAmbiguityRepository:
             source_citation=source_citation,
             question=question,
             interpretation_options=interpretation_options,
+            affected_target_paths=affected_target_paths,
             status="OPEN",
             created_by=created_by,
         )
@@ -2861,15 +3120,31 @@ class PolicyAmbiguityRepository:
         )
         return [self._payload(row) for row in records.scalars().all()]
 
-    async def has_open_ambiguities(self, *, tenant_id: str, domain_id: str) -> bool:
+    async def has_open_ambiguities(
+        self,
+        *,
+        tenant_id: str,
+        domain_id: str,
+        affected_target_paths: set[str],
+    ) -> bool:
+        """Block only ambiguities that overlap the candidate release.
+
+        Older records without a declared scope remain conservatively blocking
+        until resolved. New records should name the fields they affect so an
+        unrelated interpretation cannot freeze ordinary policy maintenance.
+        """
         result = await self.session.execute(
-            select(DBPolicyAmbiguity.id).where(
+            select(DBPolicyAmbiguity.affected_target_paths).where(
                 DBPolicyAmbiguity.tenant_id == tenant_id,
                 DBPolicyAmbiguity.domain_id == domain_id,
                 DBPolicyAmbiguity.status == "OPEN",
-            ).limit(1)
+            )
         )
-        return result.scalar_one_or_none() is not None
+        for paths in result.scalars().all():
+            scoped_paths = set(cast(list[str], paths or []))
+            if not scoped_paths or scoped_paths.intersection(affected_target_paths):
+                return True
+        return False
 
     async def resolve(
         self,
@@ -3055,7 +3330,9 @@ class DraftRepository:
             policy_name=policy_name,
             author_id=author_id,
             payload=payload,
-            status="PENDING"
+            status="PENDING",
+            approved_by=None,
+            approved_at=None,
         )
         self.session.add(db_draft)
         await self.session.commit()
@@ -3069,18 +3346,33 @@ class DraftRepository:
         if not db_draft:
             return None
         return PolicyDraft(
-            id=db_draft.id, tenant_id=db_draft.tenant_id, domain_id=db_draft.domain_id,
-            policy_name=db_draft.policy_name, author_id=db_draft.author_id,
-            payload=db_draft.payload, status=db_draft.status
+            id=cast(str, db_draft.id),
+            tenant_id=cast(str, db_draft.tenant_id),
+            domain_id=cast(str, db_draft.domain_id),
+            policy_name=cast(str, db_draft.policy_name),
+            author_id=cast(str, db_draft.author_id),
+            payload=cast(dict[str, Any], db_draft.payload),
+            status=cast(str, db_draft.status),
+            approved_by=cast(Optional[str], db_draft.approved_by),
+            approved_at=cast(Optional[datetime], db_draft.approved_at),
         )
 
-    async def mark_released(self, draft_id: str, release_id: str) -> None:
+    async def mark_released(
+        self,
+        draft_id: str,
+        release_id: str,
+        *,
+        approved_by: str | None = None,
+        approved_at: datetime | None = None,
+    ) -> None:
         result = await self.session.execute(
             select(DBPolicyDraft).where(DBPolicyDraft.id == draft_id)
         )
         db_draft = result.scalars().first()
         if db_draft:
             setattr(db_draft, "status", "RELEASED")
+            setattr(db_draft, "approved_by", approved_by)
+            setattr(db_draft, "approved_at", approved_at or datetime.now(timezone.utc))
             setattr(db_draft, "released_as_release_id", release_id)
             await self.session.commit()
 
@@ -3102,11 +3394,107 @@ class EvidenceRepository:
                 domain_id=domain_id,
                 subject_id=evidence.subject_id,
                 source_type=evidence.source_type,
+                source_authority=evidence.source_authority,
+                record_state=evidence.record_state,
+                source_system=evidence.source_system,
+                source_record_version=evidence.source_record_version,
+                source_as_of=evidence.source_as_of,
                 s3_key_reference=evidence.storage_key,
                 cryptographic_hash=evidence.cryptographic_hash,
             )
         )
         await self.session.commit()
+
+    async def create_system_record_evidence(
+        self,
+        evidence: Evidence,
+        *,
+        tenant_id: str,
+        domain_id: str,
+        mapping_id: str,
+        record_fingerprint: str,
+    ) -> bool:
+        """Persist one approved source record once, even when an export is retried."""
+        existing = await self.session.execute(
+            select(DBEvidence.id).where(
+                DBEvidence.tenant_id == tenant_id,
+                DBEvidence.domain_id == domain_id,
+                DBEvidence.source_mapping_id == mapping_id,
+                DBEvidence.source_record_fingerprint == record_fingerprint,
+            )
+        )
+        if existing.scalar_one_or_none() is not None:
+            return False
+        self.session.add(DBEvidence(
+            id=evidence.id,
+            tenant_id=tenant_id,
+            domain_id=domain_id,
+            subject_id=evidence.subject_id,
+            source_type=evidence.source_type,
+            source_authority=evidence.source_authority,
+            record_state=evidence.record_state,
+            source_system=evidence.source_system,
+            source_record_version=evidence.source_record_version,
+            source_as_of=evidence.source_as_of,
+            source_mapping_id=mapping_id,
+            source_record_fingerprint=record_fingerprint,
+            s3_key_reference=evidence.storage_key,
+            cryptographic_hash=evidence.cryptographic_hash,
+        ))
+        try:
+            await self.session.commit()
+        except IntegrityError:
+            await self.session.rollback()
+            return False
+        return True
+
+    async def delete_evidence(
+        self,
+        evidence_id: str,
+        *,
+        tenant_id: str,
+        domain_id: str,
+        actor_id: str,
+        reason: str,
+        now: datetime | None = None
+    ) -> bool:
+        """Withdraw evidence from operational use by appending an immutable event."""
+        current_time = now or datetime.now(timezone.utc)
+
+        # Check if evidence exists and belongs to tenant
+        result = await self.session.execute(
+            select(DBEvidence).where(
+                DBEvidence.id == evidence_id,
+                DBEvidence.tenant_id == tenant_id,
+                DBEvidence.domain_id == domain_id,
+            )
+        )
+        evidence = result.scalars().first()
+        if not evidence:
+            return False
+
+        # Check if already deleted
+        deletion_result = await self.session.execute(
+            select(DBEvidenceDeletionEvent).where(
+                DBEvidenceDeletionEvent.evidence_id == evidence_id
+            )
+        )
+        if deletion_result.scalars().first():
+            return False
+
+        self.session.add(
+            DBEvidenceDeletionEvent(
+                id="ev_del_" + uuid.uuid4().hex,
+                evidence_id=evidence_id,
+                tenant_id=tenant_id,
+                domain_id=domain_id,
+                actor_id=actor_id,
+                reason=reason,
+                timestamp=current_time
+            )
+        )
+        await self.session.commit()
+        return True
 
     async def get_evidence(
         self,
@@ -3118,6 +3506,7 @@ class EvidenceRepository:
             select(DBEvidence).where(
                 DBEvidence.id == evidence_id,
                 DBEvidence.tenant_id == tenant_id,
+                ~exists().where(DBEvidenceDeletionEvent.evidence_id == DBEvidence.id)
             )
         )
         db_ev = result.scalars().first()
@@ -3132,6 +3521,14 @@ class EvidenceRepository:
                 storage_key=cast(Optional[str], db_ev.s3_key_reference),
                 cryptographic_hash=cast(str, db_ev.cryptographic_hash),
                 timestamp=db_ev.timestamp.isoformat() if db_ev.timestamp else "",
+                source_authority=cast(Any, db_ev.source_authority),
+                record_state=cast(Any, db_ev.record_state),
+                source_system=cast(Optional[str], db_ev.source_system),
+                source_record_version=cast(Optional[str], db_ev.source_record_version),
+                source_as_of=cast(Optional[datetime], db_ev.source_as_of),
+                retention_expires_at=cast(Optional[datetime], db_ev.retention_expires_at),
+                deleted_at=cast(Optional[datetime], db_ev.deleted_at),
+                deletion_reason=cast(Optional[str], db_ev.deletion_reason),
             ),
             tenant_id=cast(str, db_ev.tenant_id),
             domain_id=cast(str, db_ev.domain_id),
@@ -3151,6 +3548,7 @@ class EvidenceRepository:
                 DBEvidence.tenant_id == tenant_id,
                 DBEvidence.domain_id == domain_id,
                 DBEvidence.subject_id == subject_id,
+                ~exists().where(DBEvidenceDeletionEvent.evidence_id == DBEvidence.id)
             )
             .order_by(DBEvidence.timestamp.desc(), DBEvidence.id)
         )
@@ -3159,6 +3557,10 @@ class EvidenceRepository:
                 "evidence_id": cast(str, evidence.id),
                 "source_type": cast(str, evidence.source_type),
                 "captured_at": evidence.timestamp.isoformat() if evidence.timestamp else None,
+                "source_authority": cast(str, evidence.source_authority),
+                "record_state": cast(str, evidence.record_state),
+                "source_system": cast(Optional[str], evidence.source_system),
+                "source_as_of": evidence.source_as_of.isoformat() if evidence.source_as_of else None,
                 "integrity_hash": cast(str, evidence.cryptographic_hash),
             }
             for evidence in result.scalars().all()
@@ -3254,6 +3656,87 @@ class EvidenceFactProposalRepository:
         )
         await self.session.commit()
         return self._payload(proposal)
+
+    async def accept_confirmed_system_record(
+        self,
+        *,
+        tenant_id: str,
+        domain_id: str,
+        evidence: Evidence,
+        mapping_id: str,
+        mapping_reviewer_id: str,
+        values: dict[str, Any],
+        source_system: str,
+        source_record_version: str,
+    ) -> None:
+        """Accept declared facts through an independently approved source mapping.
+
+        This is intentionally narrower than ordinary fact attestation. It may
+        only be used for a *confirmed* system record and preserves the mapping
+        reviewer's identity as the acceptance authority for every created fact.
+        """
+        if evidence.record_state != "confirmed" or evidence.source_authority != "official_system":
+            raise EvidenceFactProposalConflictError(
+                "Only confirmed records from an official system may use mapping-based acceptance."
+            )
+        accepted_at = datetime.now(timezone.utc)
+        for target_path, asserted_value in values.items():
+            canonical_input = json.dumps(
+                {
+                    "tenant_id": tenant_id,
+                    "domain_id": domain_id,
+                    "evidence_id": evidence.id,
+                    "evidence_sha256": evidence.cryptographic_hash,
+                    "target_path": target_path,
+                    "asserted_value": asserted_value,
+                    "mapping_id": mapping_id,
+                    "proposal_origin": "CONFIRMED_SYSTEM_RECORD",
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+            )
+            proposal = DBEvidenceFactProposal(
+                id="efp_" + uuid.uuid4().hex,
+                tenant_id=tenant_id,
+                domain_id=domain_id,
+                evidence_id=evidence.id,
+                subject_id=evidence.subject_id,
+                target_path=target_path,
+                asserted_value=asserted_value,
+                source_quote=f"Confirmed {source_system} record version {source_record_version}.",
+                source_locator=f"approved mapping {mapping_id}",
+                extraction_confidence=1.0,
+                source_trust_level=1.0,
+                proposal_origin="CONFIRMED_SYSTEM_RECORD",
+                evidence_sha256=evidence.cryptographic_hash,
+                input_sha256=hashlib.sha256(canonical_input.encode("utf-8")).hexdigest(),
+                proposed_by=f"system-record:{mapping_id}",
+                status="ACCEPTED",
+                reviewed_by=mapping_reviewer_id,
+                review_note="Accepted through independently approved system-record mapping.",
+                reviewed_at=accepted_at,
+            )
+            self.session.add(proposal)
+            self.session.add(
+                DBEvidenceFactProposalEvent(
+                    id="efpe_" + uuid.uuid4().hex,
+                    proposal_id=proposal.id,
+                    tenant_id=tenant_id,
+                    domain_id=domain_id,
+                    sequence=1,
+                    action="ACCEPTED",
+                    actor_id=mapping_reviewer_id,
+                    note="Accepted through independently approved system-record mapping.",
+                )
+            )
+        try:
+            await self.session.commit()
+        except IntegrityError as exc:
+            await self.session.rollback()
+            raise EvidenceFactProposalConflictError(
+                "The system record facts changed while they were being accepted."
+            ) from exc
 
     async def get(
         self,
@@ -3431,6 +3914,8 @@ class ReleaseRepository:
             effective_from=cast(Optional[date], db_release.effective_from),
             effective_until=cast(Optional[date], db_release.effective_until),
             applicability=cast(Dict[str, List[str]], db_release.applicability or {}),
+            workflows=[WorkflowRule.model_validate(item) for item in cast(List[Dict[str, Any]], db_release.workflows or [])],
+            source_manifest_hash=cast(Optional[str], db_release.source_manifest_hash),
         )
 
     async def get_release(self, domain_id: str, version: str) -> Optional[Release]:
@@ -3516,6 +4001,8 @@ class ReleaseRepository:
         compiled_bytecode: dict,
         *,
         draft_id: Optional[str] = None,
+        approved_by: str | None = None,
+        approved_at: datetime | None = None,
     ) -> None:
         """Persists a newly compiled, signed Release together with its RuleGraph.
         Both rows are immutable from this point on -- there is no update path."""
@@ -3543,6 +4030,8 @@ class ReleaseRepository:
             effective_from=release.effective_from,
             effective_until=release.effective_until,
             applicability=release.applicability,
+            workflows=[workflow.model_dump(mode='json') for workflow in release.workflows],
+            source_manifest_hash=release.source_manifest_hash,
         )
         db_rule_graph = DBRuleGraph(
             id=rule_graph.id,
@@ -3553,6 +4042,8 @@ class ReleaseRepository:
         self.session.add(db_rule_graph)
         if draft is not None:
             setattr(draft, "status", "RELEASED")
+            setattr(draft, "approved_by", approved_by)
+            setattr(draft, "approved_at", approved_at or datetime.now(timezone.utc))
             setattr(draft, "released_as_release_id", release.id)
         try:
             await self.session.commit()
@@ -3599,6 +4090,7 @@ class ReasoningRepository:
         evidence_id: str,
         claims: List[Claim],
         facts: List[Fact],
+        release: Release | None = None,
     ) -> str:
         """Persists a trace and its complete epistemic lineage atomically."""
         db_graph = DBReasoningGraph(
@@ -3611,7 +4103,9 @@ class ReasoningRepository:
             evidence_id=evidence_id,
             graph_data=graph.model_dump(mode='json'),
             overall_decision=overall_decision,
-            overall_confidence=overall_confidence
+            overall_confidence=overall_confidence,
+            # Application time retains microsecond ordering on SQLite as well as Postgres.
+            evaluated_at=datetime.now(timezone.utc),
         )
         self.session.add(db_graph)
 
@@ -3649,8 +4143,99 @@ class ReasoningRepository:
                 )
             )
 
+        if release is not None:
+            for workflow in release.workflows:
+                triggered = (
+                    workflow.trigger_condition == "overall == pass" and overall_decision == "ELIGIBLE"
+                ) or (
+                    workflow.trigger_condition == "overall == fail" and overall_decision == "INELIGIBLE"
+                )
+                if not triggered:
+                    continue
+                idempotency_key = hashlib.sha256(
+                    f"{tenant_id}:{release.id}:{graph.id}:{workflow.id}".encode("utf-8")
+                ).hexdigest()
+                self.session.add(
+                    DBWorkflowOutbox(
+                        id="wfout_" + uuid.uuid4().hex,
+                        tenant_id=tenant_id,
+                        domain_id=domain_id,
+                        release_id=release.id,
+                        reasoning_graph_id=graph.id,
+                        workflow_id=workflow.id,
+                        action_type=workflow.action_type,
+                        action_payload=workflow.action_payload,
+                        idempotency_key=idempotency_key,
+                        status="HELD",
+                    )
+                )
+
         await self.session.commit()
         return cast(str, db_graph.id)
+
+    async def supersede_fact(
+        self,
+        old_fact_id: str,
+        new_fact_id: str,
+        *,
+        tenant_id: str,
+        domain_id: str,
+        actor_id: str,
+        reason: str,
+        now: datetime | None = None
+    ) -> bool:
+        """Append a historical fact relationship without mutating either fact."""
+        current_time = now or datetime.now(timezone.utc)
+
+        # Check if old fact exists and belongs to tenant/domain
+        result = await self.session.execute(
+            select(DBFact).where(
+                DBFact.id == old_fact_id,
+                DBFact.tenant_id == tenant_id,
+                DBFact.domain_id == domain_id
+            )
+        )
+        old_fact = result.scalars().first()
+        if not old_fact:
+            return False
+
+        # Check if new fact exists and belongs to tenant/domain
+        new_result = await self.session.execute(
+            select(DBFact).where(
+                DBFact.id == new_fact_id,
+                DBFact.tenant_id == tenant_id,
+                DBFact.domain_id == domain_id
+            )
+        )
+        new_fact = new_result.scalars().first()
+        if not new_fact or old_fact_id == new_fact_id:
+            return False
+        if new_fact.reasoning_graph_id != old_fact.reasoning_graph_id:
+            return False
+
+        # Check if already superseded
+        super_result = await self.session.execute(
+            select(DBFactSupersessionEvent).where(
+                DBFactSupersessionEvent.old_fact_id == old_fact_id
+            )
+        )
+        if super_result.scalars().first():
+            return False
+
+        self.session.add(
+            DBFactSupersessionEvent(
+                id="fact_sup_" + uuid.uuid4().hex,
+                old_fact_id=old_fact_id,
+                new_fact_id=new_fact_id,
+                tenant_id=tenant_id,
+                domain_id=domain_id,
+                actor_id=actor_id,
+                reason=reason,
+                timestamp=current_time
+            )
+        )
+        await self.session.commit()
+        return True
 
     async def get_reasoning_graph(
         self,
@@ -3663,6 +4248,7 @@ class ReasoningRepository:
             select(DBReasoningGraph).where(
                 DBReasoningGraph.id == graph_id,
                 DBReasoningGraph.tenant_id == tenant_id,
+                ~exists().where(DBReasoningGraphDeletionEvent.reasoning_graph_id == DBReasoningGraph.id)
             )
         )
         db_graph = result.scalars().first()
@@ -3672,6 +4258,98 @@ class ReasoningRepository:
         data = cast(Dict[str, Any], db_graph.graph_data)
         
         return ReasoningGraph.model_validate(data)
+
+    async def list_subject_current_positions(
+        self,
+        *,
+        tenant_id: str,
+        subject_id: str,
+    ) -> list[dict[str, Any]]:
+        """Return the newest visible engine position for each configured domain.
+
+        This is deliberately a read model over immutable traces, not a student
+        information system record or a new source of institutional truth.
+        """
+        result = await self.session.execute(
+            select(DBReasoningGraph, DBDomain)
+            .join(DBDomain, DBDomain.id == DBReasoningGraph.domain_id)
+            .where(
+                DBReasoningGraph.tenant_id == tenant_id,
+                DBReasoningGraph.subject_id == subject_id,
+                DBDomain.tenant_id == tenant_id,
+                ~exists().where(
+                    DBReasoningGraphDeletionEvent.reasoning_graph_id == DBReasoningGraph.id
+                ),
+            )
+            .order_by(DBReasoningGraph.evaluated_at.desc(), DBReasoningGraph.id.desc())
+        )
+        newest_by_domain: dict[str, dict[str, Any]] = {}
+        for graph, domain in result.all():
+            domain_id = cast(str, graph.domain_id)
+            if domain_id in newest_by_domain:
+                continue
+            schema = cast(dict[str, Any], domain.schema_definition)
+            # New domains use subject-neutral wording. Existing curriculum
+            # domains retain their earlier key until their next approved draft.
+            surface = schema.get("subject_position", schema.get("student_position", {}))
+            surface = surface if isinstance(surface, dict) else {}
+            presentation = _domain_presentation(schema)
+            graph_data = cast(dict[str, Any], graph.graph_data)
+            evaluation_context = graph_data.get("evaluation_context", {})
+            evaluation_context = evaluation_context if isinstance(evaluation_context, dict) else {}
+            casework = schema.get("casework", {})
+            casework = casework if isinstance(casework, dict) else {}
+            source_system = evaluation_context.get("source_system")
+            source = None
+            if isinstance(source_system, str) and source_system:
+                source = (await self.session.execute(select(DBInstitutionalDataSource).where(
+                    DBInstitutionalDataSource.tenant_id == tenant_id,
+                    DBInstitutionalDataSource.domain_id == domain_id,
+                    DBInstitutionalDataSource.display_name == source_system,
+                    DBInstitutionalDataSource.status == "APPROVED",
+                ))).scalars().first()
+            source_as_of = evaluation_context.get("source_as_of")
+            source_expected_by = None
+            if source is not None and source.expected_refresh_hours and isinstance(source_as_of, str):
+                try:
+                    as_of = datetime.fromisoformat(source_as_of.replace("Z", "+00:00"))
+                    as_of = as_of if as_of.tzinfo else as_of.replace(tzinfo=timezone.utc)
+                    source_expected_by = as_of + timedelta(hours=cast(int, source.expected_refresh_hours))
+                except ValueError:
+                    source_expected_by = None
+            escalation_hours = casework.get("escalation_after_hours", 72)
+            if isinstance(escalation_hours, bool) or not isinstance(escalation_hours, int) or escalation_hours < 1:
+                escalation_hours = 72
+            provisional_escalation_by = None
+            if isinstance(source_as_of, str):
+                try:
+                    as_of = datetime.fromisoformat(source_as_of.replace("Z", "+00:00"))
+                    as_of = as_of if as_of.tzinfo else as_of.replace(tzinfo=timezone.utc)
+                    provisional_escalation_by = as_of + timedelta(hours=escalation_hours)
+                except ValueError:
+                    provisional_escalation_by = None
+            newest_by_domain[domain_id] = {
+                "trace_id": cast(str, graph.id),
+                "domain_id": domain_id,
+                "domain_name": cast(str, domain.name),
+                "position_type": str(surface.get("type", "other")),
+                "position_label": str(surface.get("label", domain.name)),
+                "governed_person_label": presentation["governed_person_label"],
+                "position_collection_label": presentation["position_collection_label"],
+                "decision": cast(str, graph.overall_decision),
+                "release_version": str(evaluation_context.get("release_version", "Recorded release")),
+                "source_authority": str(evaluation_context.get("source_authority", "subject_submitted")),
+                "record_state": str(evaluation_context.get("record_state", "provisional")),
+                "source_system": source_system,
+                "source_as_of": source_as_of,
+                "source_expected_by": source_expected_by.isoformat() if source_expected_by else None,
+                "source_is_stale": bool(source_expected_by and source_expected_by < datetime.now(timezone.utc)),
+                "responsible_group": casework.get("primary_group"),
+                "fallback_group": casework.get("fallback_group"),
+                "provisional_escalation_by": provisional_escalation_by.isoformat() if provisional_escalation_by else None,
+                "evaluated_at": graph.evaluated_at.isoformat() if graph.evaluated_at else None,
+            }
+        return list(newest_by_domain.values())
 
     async def get_evaluation_artifacts(
         self,
@@ -3748,6 +4426,7 @@ class ReasoningRepository:
             .where(
                 DBFact.reasoning_graph_id == reasoning_graph_id,
                 DBFact.tenant_id == tenant_id,
+                ~exists().where(DBFactSupersessionEvent.old_fact_id == DBFact.id)
             )
             .order_by(DBFact.created_at, DBFact.id)
         )
@@ -3760,6 +4439,12 @@ class ReasoningRepository:
                 status=cast(Any, row.status),
                 supporting_claims=cast(List[str], row.supporting_claim_ids),
                 rejected_claims=cast(List[str], row.rejected_claim_ids),
+                retention_expires_at=cast(Optional[datetime], row.retention_expires_at),
+                deleted_at=cast(Optional[datetime], row.deleted_at),
+                deletion_reason=cast(Optional[str], row.deletion_reason),
+                superseded_by_fact_id=cast(Optional[str], row.superseded_by_fact_id),
+                superseded_at=cast(Optional[datetime], row.superseded_at),
+                superseding_reason=cast(Optional[str], row.superseding_reason),
             )
             for row in result.scalars().all()
         ]

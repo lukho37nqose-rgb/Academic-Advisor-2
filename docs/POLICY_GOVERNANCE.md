@@ -23,11 +23,15 @@ An ambiguity record contains:
 - a formal resolution and authoritative source reference; and
 - an append-only event history.
 
-An open ambiguity blocks every new release in its domain. This is intentional:
-the system cannot replace an institutional interpretation decision with an
-unstated developer or model assumption. The person who raised an ambiguity
-cannot resolve it. A `policy_owner` or monitored `tenant_admin` records the
-resolution; a distinct release approver still publishes the release.
+An ambiguity names the policy facts it affects. It blocks a release only when
+that release evaluates one of those facts. This prevents an unrelated
+interpretation question from freezing harmless policy maintenance while still
+preventing the system from replacing a relevant institutional interpretation
+with an unstated developer or model assumption. Older ambiguity records with
+no declared scope remain conservatively blocking until resolved. The person who
+raised an ambiguity cannot resolve it. An `approver` or monitored `tenant_admin`
+records the resolution; the same role may publish the release only when it is a
+different identity from the draft author.
 
 The register may be managed from the **Policy Register** interface. It never
 compiles or changes a policy on its own.

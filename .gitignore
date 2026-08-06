@@ -3,6 +3,8 @@ __pycache__/
 .env
 .env.*
 !.env.example
+!frontend/.env.tenant.example
+!frontend/.env.provider.example
 *.pem
 *.key
 *.p12
@@ -10,6 +12,9 @@ __pycache__/
 secrets/
 .mypy_cache/
 .pytest_cache/
+.pytest-tmp/
+.pytest_temp/
+.pytest-runs/
 .ruff_cache/
 .coverage
 htmlcov/
@@ -26,3 +31,23 @@ frontend/playwright-report/
 frontend/blob-report/
 frontend/playwright/.cache/
 frontend/playwright/.auth/
+tmp/
+
+# Temporary local review exports from the Cacisa brand workflow.
+brand-preview/
+
+# Real pilot sources and reports remain local or institution-controlled.
+pilot/**/input/
+pilot/**/reports/
+pilot/**/completed_manifest*.json
+
+# Terraform state, plans, and institution-specific configuration must never be committed.
+deploy/terraform/.terraform/
+deploy/terraform/backend.hcl
+deploy/terraform/terraform.tfvars
+deploy/terraform/*.tfvars.json
+deploy/terraform/*.tfstate
+deploy/terraform/*.tfstate.*
+deploy/terraform/tfplan
+deploy/terraform/*.tfplan
+deploy/terraform/crash.log

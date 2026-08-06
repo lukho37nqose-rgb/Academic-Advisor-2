@@ -32,17 +32,28 @@ def _evaluate_leaf(node: ExpressionNode, facts: Dict[str, Fact], graph: Reasonin
                 id=fact_node_id,
                 type="fact",
                 label=f"Fact: {fact.target_path}",
-                data={"resolved_value": fact.resolved_value},
+                data={
+                    "resolved_value": fact.resolved_value,
+                    "source_authority": context.source_authority,
+                    "record_state": context.record_state,
+                    "source_system": context.source_system,
+                    "source_as_of": context.source_as_of.isoformat() if context.source_as_of else None,
+                },
                 computed_confidence=fact.final_confidence
             ))
         observed_value = fact.resolved_value
         confidence = fact.final_confidence
     else:
         observed_value = None
-        confidence = 0.0 # Missing fact means 0 confidence in the evaluation
+        confidence = 0.0
         
     # 2. Evaluate Logic
     if fact and fact.status == "needs_human_review":
+        passed = "NEEDS_MANUAL_REVIEW"
+    elif fact is None:
+        # Missing institutional context is not evidence that a subject fails a
+        # rule. Preserve the zero confidence, but route the position to human
+        # review rather than converting an absence of data into exclusion.
         passed = "NEEDS_MANUAL_REVIEW"
     elif observed_value is not None:
         try:
@@ -67,13 +78,13 @@ def _evaluate_leaf(node: ExpressionNode, facts: Dict[str, Fact], graph: Reasonin
                  raise UnsupportedOperatorError(f"Unsupported leaf operator encountered at runtime: {node.condition}")
         except (ValueError, TypeError):
             # Also catch if they bypassed the unsupported exception
-            if node.condition not in [">=", "<=", "<", ">", "==", "!=", "includes"]:
+            if node.condition not in SUPPORTED_LEAF_OPERATORS:
                 raise UnsupportedOperatorError(f"Unsupported leaf operator encountered at runtime: {node.condition}")
             passed = False
             confidence = 0.0
     else:
         # If observed value is None and they have an invalid condition, it still raises
-        if node.condition not in [">=", "<=", "<", ">", "==", "!=", "includes"]:
+        if node.condition not in SUPPORTED_LEAF_OPERATORS:
              raise UnsupportedOperatorError(f"Unsupported leaf operator encountered at runtime: {node.condition}")
             
     # 3. Add Rule Evaluation to Graph
@@ -183,8 +194,13 @@ def generate_reasoning_graph(context: EvaluationContext, rule_graph: RuleGraph, 
         evaluation_context=context,
     )
     
-    # Fast lookup dictionary
-    facts = {f.target_path: f for f in facts_list}
+    # A target path is a deterministic input slot. Reject ambiguity rather than
+    # silently allowing the final list element to overwrite an earlier fact.
+    facts: Dict[str, Fact] = {}
+    for fact in facts_list:
+        if fact.target_path in facts:
+            raise ValueError(f"Multiple facts were supplied for target path '{fact.target_path}'.")
+        facts[fact.target_path] = fact
     
     # Traverse the AST
     final_passed, final_confidence = _execute_node(rule_graph.root_expression, facts, graph, context)

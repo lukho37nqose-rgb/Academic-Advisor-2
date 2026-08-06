@@ -107,6 +107,10 @@ export function PublicPolicyGuide() {
   };
 
   if (guide) {
+    const governedPersonLabel = guide.governed_person_label?.trim();
+    const individualCase = governedPersonLabel && governedPersonLabel.toLowerCase() !== 'person'
+      ? `a case for an individual ${governedPersonLabel}`
+      : 'an individual case';
     return (
       <div className="mx-auto flex w-full max-w-4xl flex-col gap-8 py-4">
         <section className="border-b border-border pb-6">
@@ -124,7 +128,7 @@ export function PublicPolicyGuide() {
         </section>
 
         <p className="border-l-2 border-primary pl-4 text-sm leading-relaxed text-muted">
-          This guide explains the approved policy. It does not decide an individual case.
+          This guide explains the approved policy. It does not decide {individualCase}.
         </p>
 
         <section className="space-y-5">

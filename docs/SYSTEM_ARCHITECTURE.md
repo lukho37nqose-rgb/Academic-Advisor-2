@@ -1,6 +1,6 @@
 # Institutional Reasoning Protocol
 **Specification Version:** 1.0.0  
-**Status:** VALIDATED PROTOTYPE
+**Status:** Current implementation specification with controlled-pilot gates
 
 ## 1. Abstract
 The Institutional Reasoning Protocol (IRP) defines a standardized, language-agnostic architecture for evaluating individuals or entities against complex, evolving institutional policies. It explicitly separates the epistemological resolution of facts from the deterministic execution of rules.
@@ -35,8 +35,9 @@ To preserve the integrity of appeals and audits, the protocol strictly models th
 * **Definition:** A canonical decision input established by independent human
   acceptance of a cited candidate fact.
 * **Mechanism:** One accepted proposal per evidence and target path is materialised
-  as a fact for evaluation. It cannot be overwritten. A governed successor-fact
-  workflow remains a required future capability for corrections.
+  as a fact for evaluation. It cannot be overwritten. Corrections use a governed
+  successor-fact relationship that preserves the earlier fact and creates a new
+  evaluation path.
 * **Constraint:** Facts retain their supporting claim, evidence hash, tenant,
   domain, and reasoning trace lineage. They are append-only in PostgreSQL.
 
@@ -48,7 +49,7 @@ The protocol abandons linear evaluation in favor of explicit graph generation.
 ### 3.1 RuleGraph (Static Policy)
 * **Definition:** The static, compiled bytecode representing an institution's policy for a given domain and version.
 * **Mechanism:** Policies are authored in human-readable SDKs or visual builders, but compile down into a rigorous `ExpressionNode` AST (Abstract Syntax Tree) supporting logical grouping (`AND`, `OR`, `NOT`).
-* **Constraint:** A RuleGraph is tied to an immutable `Release`. The Release MUST be cryptographically signed to prove governance approval (Author vs. Approver separation of duties).
+* **Constraint:** A RuleGraph is tied to an immutable `Release`. The Release MUST be cryptographically signed to prove governance approval (Author vs. Approver separation of duties), and the signed payload binds policy metadata, rule logic, workflow intents, and a canonical cited-source manifest hash.
 
 ### 3.2 ReasoningGraph (Dynamic Trace)
 * **Definition:** The canonical artifact generated when a Subject is evaluated. 
@@ -66,9 +67,11 @@ institutional decision.
 ### 3.3 External Workflow Boundary (Post-Evaluation)
 * **Definition:** A reserved integration boundary for any future action triggered
   after a reasoning graph.
-* **Current constraint:** The runtime does not select, queue, simulate, or
-  deliver workflow actions. A transactional outbox and separate dispatcher are
-  required before any institutional write is enabled.
+* **Current constraint:** Workflow rules are reviewed release content. When a
+  signed workflow rule matches an evaluation, the runtime creates a tenant-
+  scoped `HELD` outbox record in the same transaction as the reasoning trace.
+  No external delivery is performed. A separate, approved dispatcher is required
+  before any institutional write is enabled.
 
 ---
 

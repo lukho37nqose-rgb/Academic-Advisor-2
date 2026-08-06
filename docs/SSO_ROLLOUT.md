@@ -1,6 +1,9 @@
 # SSO Rollout
 
-IRE validates institutional OpenID Connect access tokens through the provider's JWKS endpoint. It does not operate a local password store or issue production user credentials.
+IRE validates institutional OpenID Connect access tokens through the provider's
+JWKS endpoint. The reference client uses authorization code plus PKCE through
+the institution's approved identity provider. IRE does not operate a local
+password store or issue production user credentials.
 
 ## Required production configuration
 
@@ -30,7 +33,7 @@ Every IRE token must contain:
 | --- | --- | --- |
 | `sub` | Immutable staff or person identity for audit events | `8ce2...` |
 | `tenant_id` | Institution boundary | `university_a` |
-| `role` | One IRE role | `assistance_coordinator` |
+| `role` | One IRE role | `staff_member` |
 | `domain_ids` | Assigned decision domains | `["dom_support_2026"]` |
 | `student_number` | Subject record binding where the role is `subject` | `S1234567` |
 
@@ -39,6 +42,28 @@ domain assignments must be non-empty strings without duplicates. The subject
 claim must be stable, non-reassigned, and match the subject identifier used by
 the institution's system of record. A `subject` token can only submit evidence,
 evaluate, or retrieve traces for that exact subject identifier.
+
+## IRE role model
+
+Map IdP groups to one of these six roles. The roles describe application
+capabilities, not an institution's job titles; `domain_ids` restricts each
+staff role to its authorised faculty, department, programme, or other decision
+domain.
+
+| Role claim | Intended responsibility |
+| --- | --- |
+| `subject` | View and challenge only their own institutional position. |
+| `staff_member` | Day-to-day assigned-domain records, assistance, decision-review, cited-fact proposal, and low-risk metadata work. |
+| `policy_editor` | No-code domain setup, policy drafting, source intake, mapping preparation, and calibration preparation. |
+| `approver` | Independent fact/context attestation, interpretation resolution, mapping/calibration review, and release publication. Own work remains unapprovable. |
+| `auditor` | Read-only review of authorised history, sources, traces, and controls. |
+| `tenant_admin` | ICTS or designated system owner; monitored tenant setup and break-glass access. |
+
+The former `metadata_steward`, `institutional_records_steward`,
+`assistance_coordinator`, `rule_author`, `rule_approver`, and `policy_owner`
+claims are no longer accepted. Update the IdP group mapping before deploying
+this version; a rejected legacy role fails closed rather than receiving a broad
+replacement role.
 
 ## Rollout checklist
 
@@ -49,4 +74,10 @@ evaluate, or retrieve traces for that exact subject identifier.
 5. Enable trusted proxy headers only when the API is behind the institution's controlled reverse proxy.
 6. Rehearse an access revocation and an IdP outage before pilot launch.
 
-The reference React client accepts a bearer token supplied by the host environment. An institutional portal, access gateway, or OIDC SPA should obtain that token through its approved authorization-code-with-PKCE flow; IRE remains responsible for validating the token and enforcing its claims.
+The reference React client is configured only with public OIDC values:
+authority, client identifier, scopes, optional API audience, redirect origin,
+and post-logout redirect origin. It fails closed when those values are absent.
+An institutional portal or access gateway may launch the same client, but the
+browser must not invent roles, tenant identifiers, or domain assignments. IRE
+remains responsible for validating the access token and enforcing its claims on
+every protected API request.

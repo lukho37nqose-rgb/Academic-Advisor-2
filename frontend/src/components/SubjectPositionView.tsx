@@ -1,11 +1,8 @@
 import {
-  AlertTriangle,
   CheckCircle2,
-  CircleHelp,
-  ClipboardCheck,
-  FileText,
-  Scale,
   XCircle,
+  Info,
+  UserCircle
 } from 'lucide-react';
 import type { GraphNode, ReasoningGraph } from '../api/client';
 import { SubjectDecisionReview } from './SubjectDecisionReview';
@@ -15,8 +12,8 @@ type PositionState = 'satisfied' | 'not_satisfied' | 'human_review' | 'indetermi
 type PositionPresentation = {
   state: PositionState;
   title: string;
-  summary: string;
-  process: string;
+  meaning: string;
+  action: string;
   icon: typeof CheckCircle2;
   panelClassName: string;
   iconClassName: string;
@@ -27,10 +24,10 @@ function positionPresentation(conclusion?: GraphNode): PositionPresentation {
   if (outcome === 'NEEDS_MANUAL_REVIEW') {
     return {
       state: 'human_review',
-      title: 'Human consideration is required',
-      summary: 'Your record meets a condition that needs human consideration under the published process.',
-      process: 'This is not, by itself, a final institutional decision or an adverse outcome.',
-      icon: AlertTriangle,
+      title: 'Your situation needs human consideration.',
+      meaning: 'Your record contains information that requires a person to review it under the published process. This is not a final decision.',
+      action: 'An authorised institutional reviewer will look at your case. You do not need to take action right now unless contacted.',
+      icon: UserCircle,
       panelClassName: 'border-amber-200 bg-amber-50 text-amber-950',
       iconClassName: 'text-amber-700',
     };
@@ -38,9 +35,9 @@ function positionPresentation(conclusion?: GraphNode): PositionPresentation {
   if (outcome === true) {
     return {
       state: 'satisfied',
-      title: 'The evaluated policy conditions are satisfied',
-      summary: 'Based on the authorised record used for this trace, the published conditions evaluated here are currently satisfied.',
-      process: 'This view explains the policy application. It does not replace a separate institutional confirmation or committee process.',
+      title: 'You meet the requirements to continue.',
+      meaning: 'Based on your current record, you have satisfied the necessary conditions for this process.',
+      action: 'This explains the policy conditions evaluated here. Your institution remains responsible for any separate registration or committee decision.',
       icon: CheckCircle2,
       panelClassName: 'border-emerald-200 bg-emerald-50 text-emerald-950',
       iconClassName: 'text-emerald-700',
@@ -49,9 +46,9 @@ function positionPresentation(conclusion?: GraphNode): PositionPresentation {
   if (outcome === false) {
     return {
       state: 'not_satisfied',
-      title: 'One or more evaluated conditions are not yet satisfied',
-      summary: 'The trace identifies the conditions that did not pass against the authorised record used for this evaluation.',
-      process: 'This view does not change an institutional record or replace a separate institutional decision process.',
+      title: 'You do not currently meet the requirements.',
+      meaning: 'Based on your record, one or more conditions for this process have not been met.',
+      action: 'You may need to seek a concession, submit missing evidence, or speak to an advisor about your options.',
       icon: XCircle,
       panelClassName: 'border-rose-200 bg-rose-50 text-rose-950',
       iconClassName: 'text-rose-700',
@@ -59,12 +56,12 @@ function positionPresentation(conclusion?: GraphNode): PositionPresentation {
   }
   return {
     state: 'indeterminate',
-    title: 'Your policy position needs institutional review',
-    summary: 'The available trace does not contain a complete policy position that can be shown safely.',
-    process: 'This is not a final institutional decision. An authorised institutional reviewer needs to confirm the next step.',
-    icon: AlertTriangle,
-    panelClassName: 'border-amber-200 bg-amber-50 text-amber-950',
-    iconClassName: 'text-amber-700',
+    title: 'Your position is currently unclear.',
+    meaning: 'We cannot determine your position automatically based on the available information.',
+    action: 'Please contact the responsible institutional office or support route for clarification.',
+    icon: Info,
+    panelClassName: 'border-slate-200 bg-slate-50 text-slate-950',
+    iconClassName: 'text-slate-700',
   };
 }
 
@@ -76,27 +73,20 @@ function displayValue(value: unknown): string {
   return 'Recorded value available';
 }
 
-function displayOperator(value: unknown): string {
-  const labels: Record<string, string> = {
-    '==': 'is exactly',
-    '!=': 'is not',
-    '>=': 'is at least',
-    '<=': 'is at most',
-    '>': 'is greater than',
-    '<': 'is less than',
-    includes: 'includes',
-  };
-  return typeof value === 'string' ? labels[value] ?? value : 'matches';
+function requirementStatus(value: unknown) {
+  if (value === true) return { label: 'Met', className: 'text-emerald-800' };
+  if (value === false) return { label: 'Not met', className: 'text-rose-800' };
+  if (value === 'NEEDS_MANUAL_REVIEW') return { label: 'Needs human review', className: 'text-amber-800' };
+  return { label: 'Not yet determined', className: 'text-slate-700' };
 }
 
-function requirementStatus(node: GraphNode): { label: string; className: string } {
-  if (node.data.passed === 'NEEDS_MANUAL_REVIEW') {
-    return { label: 'Human review required', className: 'text-amber-800' };
-  }
-  if (node.data.passed === true) {
-    return { label: 'Satisfied', className: 'text-emerald-800' };
-  }
-  return { label: 'Not yet satisfied', className: 'text-rose-800' };
+function recordPositionNote(graph: ReasoningGraph) {
+  const context = graph.evaluation_context;
+  if (!context) return null;
+  const source = context.source_system || (context.source_authority === 'official_system' ? 'an official institutional system' : 'the records available to this service');
+  const asOf = context.source_as_of ? new Date(context.source_as_of).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' }) : null;
+  if (context.record_state === 'provisional') return `This is a current, provisional position based on ${source}${asOf ? ` as of ${asOf}` : ''}. It can change when new records or an authorised decision are received.`;
+  return `This position is based on a confirmed record from ${source}${asOf ? ` as of ${asOf}` : ''}. A later authorised correction or decision may still create a new position.`;
 }
 
 export function SubjectPositionView({ graph }: { graph: ReasoningGraph }) {
@@ -106,101 +96,110 @@ export function SubjectPositionView({ graph }: { graph: ReasoningGraph }) {
   const requirements = nodes.filter((node) => node.type === 'rule_evaluation');
   const presentation = positionPresentation(conclusion);
   const StatusIcon = presentation.icon;
-  const releaseVersion = graph.evaluation_context?.release_version ?? 'Recorded release';
-  const domainId = graph.evaluation_context?.domain_id;
+  const recordNote = recordPositionNote(graph);
+
+  // Find the primary reason (the first failed requirement, or the first passed one if all passed)
+  const primaryReason = requirements.find(r => r.data.passed === false) ||
+                        requirements.find(r => r.data.passed === 'NEEDS_MANUAL_REVIEW') ||
+                        requirements[0];
 
   return (
-    <div className="mx-auto w-full max-w-4xl py-6">
-      <section aria-labelledby="position-heading" className="border-b border-border pb-6">
-        <p className="text-sm font-medium text-muted">Your current position</p>
-        <h2 id="position-heading" className="mt-1 text-2xl font-semibold">How the published policy applies to your record</h2>
-        <div className="mt-5 flex flex-wrap gap-x-5 gap-y-2 text-sm text-muted">
-          <span>Policy release {releaseVersion}</span>
-          {domainId && <span>Decision area {domainId}</span>}
-          <span>Trace {graph.id}</span>
-        </div>
-      </section>
+    <div className="mx-auto w-full max-w-3xl py-8">
+      <section aria-labelledby="position-heading">
+        <h2 id="position-heading" className="text-sm font-semibold uppercase tracking-wider text-muted mb-4">Your current position</h2>
 
-      <section aria-labelledby="where-heading" data-position-state={presentation.state} className={`mt-6 border p-5 ${presentation.panelClassName}`}>
-        <div className="flex items-start gap-3">
-          <StatusIcon aria-hidden="true" className={`mt-0.5 h-6 w-6 shrink-0 ${presentation.iconClassName}`} />
-          <div>
-            <h3 id="where-heading" className="text-lg font-semibold">{presentation.title}</h3>
-            <p className="mt-2 text-sm leading-relaxed">{presentation.summary}</p>
+        <div className={`rounded-lg border p-6 ${presentation.panelClassName}`}>
+          <div className="flex items-start gap-4">
+            <StatusIcon aria-hidden="true" className={`mt-1 h-8 w-8 shrink-0 ${presentation.iconClassName}`} />
+            <div>
+              <h3 className="text-xl font-semibold mb-2">{presentation.title}</h3>
+              {graph.explanation ? (
+                <p className="text-base leading-relaxed">{graph.explanation}</p>
+              ) : (
+                <p className="text-base leading-relaxed">
+                  {primaryReason ? `Because: ${primaryReason.label.replace(/^Rule:\s*/, '')}` : presentation.meaning}
+                </p>
+              )}
+              <a href="#review-options" className="mt-4 inline-flex text-sm font-semibold underline underline-offset-4">Ask a question or request review</a>
+            </div>
           </div>
         </div>
+        {recordNote && <p className="mt-4 border-l-2 border-border pl-4 text-sm leading-relaxed text-muted">{recordNote}</p>}
       </section>
 
-      <section aria-labelledby="why-heading" className="mt-10">
-        <div className="flex items-center gap-2">
-          <Scale aria-hidden="true" className="h-5 w-5 text-muted" />
-          <h3 id="why-heading" className="text-lg font-semibold">Why this is your current position</h3>
+      {primaryReason && <section aria-labelledby="primary-reason-heading" className="mt-8 border-l-2 border-primary pl-5">
+        <h3 id="primary-reason-heading" className="text-sm font-semibold uppercase tracking-wider text-muted">What most affected this result</h3>
+        <div className="mt-3 flex flex-wrap items-start justify-between gap-3">
+          <p className="font-medium">{primaryReason.label.replace(/^Rule:\s*/, '')}</p>
+          <span className={`text-sm font-semibold ${requirementStatus(primaryReason.data.passed).className}`}>{requirementStatus(primaryReason.data.passed).label}</span>
         </div>
-        <p className="mt-2 max-w-3xl text-sm leading-relaxed text-muted">Each item below applies the same published policy release to the authorised record used for this trace.</p>
-        {requirements.length === 0 ? (
-          <p className="mt-5 text-sm text-muted">No individual policy conditions were recorded in this trace.</p>
-        ) : (
-          <div className="mt-5 divide-y divide-border border-y border-border">
-            {requirements.map((requirement) => {
-              const status = requirementStatus(requirement);
-              const expectedValue = requirement.data.expected_value;
-              return (
-                <article key={requirement.id} className="py-4">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <h4 className="text-sm font-semibold">{requirement.label}</h4>
-                    <span className={`text-sm font-medium ${status.className}`}>{status.label}</span>
-                  </div>
-                  {requirement.data.expected_condition && (
-                    <p className="mt-2 text-sm text-muted">
-                      Published condition: {displayOperator(requirement.data.expected_condition)} {displayValue(expectedValue)}
-                    </p>
-                  )}
-                  {typeof requirement.data.citation === 'string' && requirement.data.citation && (
-                    <p className="mt-2 text-xs text-muted">Policy source: {requirement.data.citation}</p>
-                  )}
-                </article>
-              );
-            })}
-          </div>
-        )}
-      </section>
+        {typeof primaryReason.data.citation === 'string' && primaryReason.data.citation && <p className="mt-2 text-sm text-muted">Policy source: {primaryReason.data.citation}</p>}
+      </section>}
 
-      <section aria-labelledby="record-heading" className="mt-10">
-        <div className="flex items-center gap-2">
-          <FileText aria-hidden="true" className="h-5 w-5 text-muted" />
-          <h3 id="record-heading" className="text-lg font-semibold">Record used for this view</h3>
-        </div>
-        <p className="mt-2 max-w-3xl text-sm leading-relaxed text-muted">These are the facts the institution recorded and used for this trace. A fact can be challenged without changing the published policy.</p>
-        {facts.length === 0 ? (
-          <p className="mt-5 text-sm text-muted">No resolved facts were recorded in this trace.</p>
-        ) : (
-          <dl className="mt-5 grid gap-x-8 gap-y-4 border-y border-border py-5 sm:grid-cols-2">
-            {facts.map((fact) => (
-              <div key={fact.id}>
-                <dt className="text-sm font-medium">{fact.label.replace(/^Fact:\s*/, '')}</dt>
-                <dd className="mt-1 text-sm text-muted">{displayValue(fact.data.resolved_value)}</dd>
-              </div>
+      <div className="mt-8 grid gap-8 sm:grid-cols-2">
+        <section aria-labelledby="meaning-heading">
+          <h3 id="meaning-heading" className="text-sm font-semibold uppercase tracking-wider text-muted mb-3">What this means now</h3>
+          <p className="text-base leading-relaxed">{presentation.meaning}</p>
+        </section>
+
+        <section aria-labelledby="action-heading">
+          <h3 id="action-heading" className="text-sm font-semibold uppercase tracking-wider text-muted mb-3">What you may need to do</h3>
+          <p className="text-base leading-relaxed">{presentation.action}</p>
+        </section>
+      </div>
+
+      <section aria-labelledby="requirements-heading" className="mt-12 border-t border-border pt-8">
+        <h3 id="requirements-heading" className="text-sm font-semibold uppercase tracking-wider text-muted mb-4">Policy conditions considered</h3>
+        {requirements.length === 0 ? <p className="text-sm text-muted">No individual policy conditions were recorded for this trace.</p> : (
+          <div className="space-y-3">
+            {requirements.map((requirement) => (
+              <article key={requirement.id} className="border-l-2 border-border pl-4">
+                <div className="flex flex-wrap items-start justify-between gap-3"><p className="font-medium">{requirement.label.replace(/^Rule:\s*/, '')}</p><span className={`text-sm font-semibold ${requirementStatus(requirement.data.passed).className}`}>{requirementStatus(requirement.data.passed).label}</span></div>
+                {typeof requirement.data.citation === 'string' && requirement.data.citation && <p className="mt-1 text-sm text-muted">Policy source: {requirement.data.citation}</p>}
+              </article>
             ))}
-          </dl>
+          </div>
         )}
       </section>
 
-      <section aria-labelledby="process-heading" className="mt-10 border-y border-border py-6">
-        <div className="flex items-center gap-2">
-          <ClipboardCheck aria-hidden="true" className="h-5 w-5 text-muted" />
-          <h3 id="process-heading" className="text-lg font-semibold">What process applies</h3>
-        </div>
-        <p className="mt-3 max-w-3xl text-sm leading-relaxed text-muted">{presentation.process}</p>
-      </section>
-
-      <section aria-labelledby="options-heading" className="mt-10 border-t border-border pt-6">
-        <div className="flex items-center gap-2">
-          <CircleHelp aria-hidden="true" className="h-5 w-5 text-muted" />
-          <h3 id="options-heading" className="text-lg font-semibold">What you can do</h3>
-        </div>
-        <p className="mt-2 max-w-3xl text-sm leading-relaxed text-muted">You can request a review of a fact, missing evidence, policy interpretation, or accessibility concern. You can also use the approved policy guide and assistance route available for your institution.</p>
+      <section id="review-options" aria-labelledby="options-heading" className="mt-12 border-t border-border pt-8">
+        <h3 id="options-heading" className="text-sm font-semibold uppercase tracking-wider text-muted mb-4">Need to challenge or clarify this?</h3>
+        <p className="mb-6 text-base leading-relaxed text-muted">
+          If you believe information is missing, a rule was applied incorrectly, or you have exceptional circumstances, you can start a review. You do not need to know the exact policy name to ask for help.
+        </p>
         <SubjectDecisionReview graph={graph} />
       </section>
+
+      {/* Institutional Details (Collapsible or secondary) */}
+      <details className="mt-12 group border-t border-border pt-6">
+        <summary className="cursor-pointer text-sm font-medium text-muted hover:text-foreground transition-colors">
+          View institutional details and record history
+        </summary>
+        <div className="mt-6 space-y-8">
+          <section>
+            <h4 className="text-sm font-semibold mb-3">Record used for this view</h4>
+            {facts.length === 0 ? (
+              <p className="text-sm text-muted">No resolved facts were recorded.</p>
+            ) : (
+              <dl className="grid gap-x-8 gap-y-4 sm:grid-cols-2 bg-slate-50 p-4 rounded-md border border-slate-100">
+                {facts.map((fact) => (
+                  <div key={fact.id}>
+                    <dt className="text-xs font-medium text-muted">{fact.label.replace(/^Fact:\s*/, '')}</dt>
+                    <dd className="mt-1 text-sm">{displayValue(fact.data.resolved_value)}</dd>
+                  </div>
+                ))}
+              </dl>
+            )}
+          </section>
+          <section>
+            <h4 className="text-sm font-semibold mb-3">Policy Application</h4>
+            <div className="bg-slate-50 p-4 rounded-md border border-slate-100 text-sm">
+              <p className="text-muted mb-2">Trace ID: <span className="font-mono text-xs">{graph.id}</span></p>
+              <p className="text-muted">Release: <span className="font-mono text-xs">{graph.evaluation_context?.release_version ?? 'Recorded release'}</span></p>
+            </div>
+          </section>
+        </div>
+      </details>
     </div>
   );
 }

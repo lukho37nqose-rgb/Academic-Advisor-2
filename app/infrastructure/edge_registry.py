@@ -70,6 +70,22 @@ class EdgeRegistry:
                 f"Invalid governance configuration for tenant={tenant_id} domain={domain_id}: {exc}"
             ) from exc
 
+    def target_exists(self, tenant_id: str, domain_id: str, target_type: str, target_id: str) -> bool:
+        """Return whether an Edge resource catalogue contains a metadata target."""
+        definition = self.get_domain(tenant_id, domain_id)
+        resources = definition.get("resources")
+        if not isinstance(resources, dict):
+            return False
+        entries = resources.get(target_type)
+        if not isinstance(entries, list):
+            return False
+        for entry in entries:
+            if isinstance(entry, str) and entry == target_id:
+                return True
+            if isinstance(entry, dict) and entry.get("id") == target_id:
+                return True
+        return False
+
 
 edge_registry = EdgeRegistry()
 

@@ -5,19 +5,62 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
+  timeout: 30_000,
   headers: {
     'Content-Type': 'application/json',
   },
 });
 
-const AUTH_TOKEN = import.meta.env.VITE_AUTH_TOKEN;
+function apiProblemMessage(error: unknown): string {
+  if (!axios.isAxiosError(error)) return 'Something unexpected happened. Your changes were not submitted.';
+  if (!error.response) return 'We could not reach the institutional service. Check your connection and try again. Your changes were not submitted.';
+  if (error.response.status === 401) return 'Your session has ended. Sign in again and retry your request.';
+  if (error.response.status === 403) return 'Your account is not permitted to do that. Contact your institution if this seems incorrect.';
+  if (error.response.status === 404) return 'That record is no longer available. Refresh the page and try again.';
+  if (error.response.status === 409) return 'This record changed while you were working. Refresh it before trying again.';
+  const detail = error.response.data?.detail;
+  if (typeof detail === 'string') return detail;
+  if (Array.isArray(detail)) {
+    const first = detail[0] as { msg?: unknown } | undefined;
+    if (typeof first?.msg === 'string') return first.msg;
+  }
+  if (error.response.status >= 500) return 'The institutional service could not complete that request. Try again shortly; your changes were not submitted.';
+  return 'We could not complete that request. Check the information and try again.';
+}
+
+// Helper to get the OIDC token from session storage
+const getOidcToken = () => {
+  const providerSurface = import.meta.env.VITE_APP_SURFACE === 'provider';
+  const authority = providerSurface ? import.meta.env.VITE_PROVIDER_OIDC_AUTHORITY : import.meta.env.VITE_OIDC_AUTHORITY;
+  const clientId = providerSurface ? import.meta.env.VITE_PROVIDER_OIDC_CLIENT_ID : import.meta.env.VITE_OIDC_CLIENT_ID;
+  const oidcStorageKey = `oidc.user:${authority || "https://your-tenant.auth0.com"}:${clientId || "your-client-id"}`;
+  const oidcStorage = sessionStorage.getItem(oidcStorageKey);
+  if (!oidcStorage) return null;
+  try {
+    const user = JSON.parse(oidcStorage);
+    return user?.access_token || null;
+  } catch {
+    return null;
+  }
+};
 
 apiClient.interceptors.request.use((config) => {
-  if (AUTH_TOKEN) {
-    config.headers.Authorization = `Bearer ${AUTH_TOKEN}`;
+  const token = getOidcToken();
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
   }
   return config;
 });
+
+apiClient.interceptors.response.use(
+  (response) => response,
+  (error: unknown) => {
+    if (error && typeof error === 'object') {
+      (error as { message?: string }).message = apiProblemMessage(error);
+    }
+    return Promise.reject(error);
+  },
+);
 
 // --- Types ---
 export interface EvaluationSummary {
@@ -48,10 +91,48 @@ export interface ReasoningGraph {
     rule_graph_id: string;
     nodes: Record<string, GraphNode>;
     edges: GraphEdge[];
+    explanation?: string;
     evaluation_context?: {
         domain_id: string;
         release_version: string;
+        source_authority?: 'official_system' | 'institutional_working_record' | 'subject_submitted';
+        record_state?: 'confirmed' | 'provisional';
+        source_system?: string | null;
+        source_as_of?: string | null;
     };
+}
+
+export interface SubjectCurrentPosition {
+    trace_id: string;
+    domain_id: string;
+    domain_name: string;
+    position_type: 'curriculum' | 'assessment_eligibility' | 'eligibility' | 'institutional_standing' | 'other';
+    position_label: string;
+    governed_person_label?: string;
+    position_collection_label?: string;
+    decision: 'ELIGIBLE' | 'INELIGIBLE' | 'NEEDS_MANUAL_REVIEW';
+    release_version: string;
+    evaluated_at: string | null;
+    source_authority: 'official_system' | 'institutional_working_record' | 'subject_submitted';
+    record_state: 'confirmed' | 'provisional';
+    source_system: string | null;
+    source_as_of: string | null;
+    source_expected_by?: string | null;
+    source_is_stale?: boolean;
+    responsible_group?: string | null;
+    fallback_group?: string | null;
+    provisional_escalation_by?: string | null;
+}
+
+export interface ProviderTenantControl {
+    tenant_id: string;
+    tenant_name: string;
+    lifecycle_state: 'PILOT' | 'ACTIVE' | 'SUSPENDED' | 'DECOMMISSIONED';
+    service_tier: string;
+    integration_status: string;
+    integration_observed_at?: string | null;
+    created_at?: string | null;
+    updated_at?: string | null;
 }
 
 export interface SessionCapabilities {
@@ -144,9 +225,24 @@ export interface InstitutionalRuleInput {
     source_citation: string;
 }
 
+export type InstitutionalRootOperator = 'all' | 'any';
+export type InstitutionalRuleGroupOperator = 'all' | 'any' | 'not';
+
+export interface InstitutionalRuleGroupInput {
+    id: string;
+    label: string;
+    operator: InstitutionalRuleGroupOperator;
+    children: string[];
+}
+
 export interface InstitutionalIntakePayload {
     institution_name: string;
     domain_name: string;
+    governed_person_label?: string;
+    position_collection_label?: string;
+    subject_position_type?: 'curriculum' | 'assessment_eligibility' | 'eligibility' | 'institutional_standing' | 'other';
+    subject_position_label?: string;
+    automation_mode?: 'automatic' | 'human_confirmation_required';
     policy_name?: string;
     public_policy_guide: boolean;
     assistance_requests_enabled: boolean;
@@ -155,8 +251,14 @@ export interface InstitutionalIntakePayload {
     decision_review_response_target_hours?: number;
     support_privacy_notice_url?: string;
     offline_assistance_instructions?: string;
+    casework_primary_group?: string;
+    casework_fallback_group?: string;
+    casework_escalation_after_hours?: number;
     facts: InstitutionalFactInput[];
     rules: InstitutionalRuleInput[];
+    root_operator?: InstitutionalRootOperator;
+    rule_groups?: InstitutionalRuleGroupInput[];
+    root_group_id?: string;
 }
 
 export interface InstitutionalIntakeResponse {
@@ -199,6 +301,8 @@ export interface PublicPolicyGuide {
     domain_id: string;
     domain_name: string;
     version: string;
+    governed_person_label?: string;
+    position_collection_label?: string;
     policy: PublicPolicyNode;
     assistance_requests_enabled: boolean;
     support_response_target_hours?: number | null;
@@ -444,11 +548,34 @@ export interface SystemRecordImportFieldMapping {
 
 export interface SystemRecordImportContract {
     mapping_id: string;
+    source_id?: string;
     source_system: string;
     subject_identifier_column: string;
     source_record_version_column: string;
     source_as_of_date_column?: string;
+    record_state?: 'confirmed' | 'provisional';
     fields: SystemRecordImportFieldMapping[];
+}
+
+export interface InstitutionalDataSource {
+    source_id: string;
+    domain_id: string;
+    display_name: string;
+    source_kind: 'SYSTEM_OF_RECORD' | 'LEARNING_PLATFORM' | 'DEPARTMENT_RECORD' | 'COMMITTEE_REGISTER' | 'MANUAL';
+    authority_level: 'AUTHORITATIVE' | 'WORKING' | 'REFERENCE';
+    source_owner: string;
+    expected_refresh_hours?: number | null;
+    source_reference?: string | null;
+    connector_kind?: 'NONE' | 'REST_API' | 'SFTP_PULL' | 'DATABASE_VIEW' | 'VENDOR_API';
+    credential_reference?: string | null;
+    endpoint_reference?: string | null;
+    allowed_object?: string | null;
+    connector_status?: 'NOT_CONFIGURED' | 'CONFIGURED' | 'TEST_FAILED' | 'APPROVED' | 'PAUSED' | 'RETIRED';
+    connector_last_checked_at?: string | null;
+    status: 'PENDING' | 'APPROVED' | 'REJECTED' | 'RETIRED';
+    author_id: string;
+    reviewed_by?: string | null;
+    review_note?: string | null;
 }
 
 export interface SystemRecordImportPreview {
@@ -484,6 +611,17 @@ export interface SystemRecordImportMappingList {
     items: SystemRecordImportMapping[];
     can_submit: boolean;
     can_review: boolean;
+    can_materialize?: boolean;
+}
+
+export interface SystemRecordMaterializationResult {
+    mapping_id: string;
+    source_system: string;
+    record_state: 'confirmed' | 'provisional';
+    accepted_record_count: number;
+    evidence_created: number;
+    already_imported: number;
+    fact_acceptance: string;
 }
 
 export type SupportRequestStatus = 'OPEN' | 'IN_PROGRESS' | 'CLOSED';
@@ -496,6 +634,10 @@ export interface SupportRequest {
     message: string;
     status: SupportRequestStatus;
     response_due_at?: string | null;
+    responsible_group?: string | null;
+    fallback_group?: string | null;
+    escalation_due_at?: string | null;
+    is_escalated?: boolean;
     closed_at?: string | null;
     retention_expires_at?: string | null;
     is_overdue?: boolean;
@@ -523,6 +665,10 @@ export interface DecisionReviewCase {
     resolution?: DecisionReviewResolution | null;
     response_message?: string | null;
     response_due_at?: string | null;
+    responsible_group?: string | null;
+    fallback_group?: string | null;
+    escalation_due_at?: string | null;
+    is_escalated?: boolean;
     resolved_at?: string | null;
     closed_at?: string | null;
     retention_expires_at?: string | null;
@@ -600,6 +746,8 @@ export interface HandbookPageExcerpt {
     page_number: number;
     text_content: string;
     content_hash: string;
+    extraction_kind?: string;
+    review_priority?: 'NORMAL' | 'HIGH';
 }
 
 export interface HandbookSourceReview {
@@ -617,8 +765,27 @@ export interface HandbookOCRReview {
     page_number: number;
     provider_name: string;
     provider_reference?: string | null;
+    provider_model_version?: string | null;
+    provider_response_hash?: string | null;
+    source_page_hash?: string;
     proposed_text: string;
     proposed_text_hash: string;
+    proposed_blocks?: Array<{
+        text: string;
+        block_type: string;
+        reading_order: number;
+        bounding_box?: { x0: number; y0: number; x1: number; y1: number } | null;
+        table_cells?: string[][] | null;
+    }> | null;
+    quality_signals?: {
+        confidence?: number | null;
+        language?: string | null;
+        contains_table?: boolean;
+        handwritten?: boolean;
+        low_quality_scan?: boolean;
+        continuation_from_previous_page?: boolean;
+    } | null;
+    review_priority?: 'NORMAL' | 'HIGH';
     status: OCRReviewStatus;
     reviewed_text?: string | null;
     reviewed_by?: string | null;
@@ -638,15 +805,21 @@ export const fetchSessionCapabilities = async (): Promise<SessionCapabilities> =
     return response.data;
 }
 
-export const evaluateEvidence = async (evidenceId: string, ruleGraphId: string, subjectId: string): Promise<EvaluationSummary> => {
-    // Requires Idempotency-Key
+export const evaluateEvidence = async (
+    evidenceId: string,
+    ruleGraphId: string,
+    subjectId: string,
+    domainId: string,
+    releaseVersion: string,
+): Promise<EvaluationSummary> => {
+    // Requires Idempotency-Key.
     const idempotencyKey = `ui-${Date.now()}`;
     const response = await apiClient.post<EvaluationSummary>('/evaluate', {
         rule_graph_id: ruleGraphId,
         evidence_id: evidenceId,
         subject_id: subjectId,
-        domain_id: "sandbox_domain",
-        release_version: "1.0"
+        domain_id: domainId,
+        release_version: releaseVersion,
     }, {
         headers: {
             'Idempotency-Key': idempotencyKey
@@ -658,6 +831,21 @@ export const evaluateEvidence = async (evidenceId: string, ruleGraphId: string, 
 export const fetchReasoningGraph = async (graphId: string): Promise<ReasoningGraph> => {
     const response = await apiClient.get<ReasoningGraph>(`/reasoning/${graphId}`);
     return response.data;
+}
+
+export const fetchSubjectCurrentPositions = async (): Promise<SubjectCurrentPosition[]> => {
+    const response = await apiClient.get<{ items: SubjectCurrentPosition[] }>('/subject/current-positions');
+    return response.data.items;
+}
+
+export const fetchProviderSession = async (): Promise<{ experience: 'provider'; role: string }> => {
+    const response = await apiClient.get<{ experience: 'provider'; role: string }>('/provider/session');
+    return response.data;
+}
+
+export const fetchProviderTenants = async (): Promise<ProviderTenantControl[]> => {
+    const response = await apiClient.get<{ items: ProviderTenantControl[] }>('/provider/tenants');
+    return response.data.items;
 }
 
 export const submitQuickEdit = async (payload: QuickEditPayload): Promise<QuickEditResponse> => {
@@ -872,6 +1060,37 @@ export const previewSystemRecordImport = async (
     return response.data;
 }
 
+export const materializeSystemRecordImport = async (
+    domainId: string,
+    mappingId: string,
+    file: File,
+): Promise<SystemRecordMaterializationResult> => {
+    const form = new FormData();
+    form.append('domain_id', domainId);
+    form.append('mapping_id', mappingId);
+    form.append('file', file);
+    const response = await apiClient.post<SystemRecordMaterializationResult>(
+        '/admin/system-record-imports/materialize', form,
+        { headers: { 'Content-Type': 'multipart/form-data' } },
+    );
+    return response.data;
+}
+
+export const fetchInstitutionalDataSources = async (domainId: string): Promise<InstitutionalDataSource[]> => {
+    const response = await apiClient.get<{ items: InstitutionalDataSource[] }>('/admin/institutional-data-sources', { params: { domain_id: domainId } });
+    return response.data.items;
+};
+
+export const submitInstitutionalDataSource = async (payload: Omit<InstitutionalDataSource, 'source_id' | 'status' | 'author_id' | 'reviewed_by' | 'review_note'>): Promise<InstitutionalDataSource> => {
+    const response = await apiClient.post<InstitutionalDataSource>('/admin/institutional-data-sources', payload);
+    return response.data;
+};
+
+export const approveInstitutionalDataSource = async (sourceId: string, domainId: string): Promise<InstitutionalDataSource> => {
+    const response = await apiClient.post<InstitutionalDataSource>(`/admin/institutional-data-sources/${sourceId}/approve`, { domain_id: domainId });
+    return response.data;
+};
+
 export const fetchSystemRecordImportMappings = async (
     domainId: string,
 ): Promise<SystemRecordImportMappingList> => {
@@ -979,6 +1198,12 @@ export interface ReleaseScheduleInput {
     effectiveFrom: string;
     effectiveUntil?: string;
     applicability?: Array<{ attribute: string; values: string[] }>;
+    workflows?: Array<{
+        id: string;
+        trigger_condition: 'overall == pass' | 'overall == fail';
+        action_type: 'CREATE_INTERNAL_TASK' | 'PREPARE_NO_WRITE_EXPORT' | 'PREPARE_NOTIFICATION';
+        action_payload: Record<string, string>;
+    }>;
 }
 
 export const publishPolicyDraft = async (

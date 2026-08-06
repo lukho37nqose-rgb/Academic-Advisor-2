@@ -141,6 +141,7 @@ export function DecisionReviewInbox({ canManage }: { canManage: boolean }) {
                 <td className="max-w-[410px] px-3 py-4">
                   <p className="font-medium">{categoryLabels[reviewCase.category]}</p>
                   <p className="mt-1 leading-relaxed">{reviewCase.message}</p>
+                  {reviewCase.responsible_group && <p className="mt-2 text-xs text-muted">Responsible group: {reviewCase.responsible_group}{reviewCase.fallback_group ? ` · fallback: ${reviewCase.fallback_group}` : ''}</p>}
                   {reviewCase.disputed_fact_paths.length > 0 && <p className="mt-2 text-xs text-muted">Facts: {reviewCase.disputed_fact_paths.join(', ')}</p>}
                   {reviewCase.response_message && <p className="mt-2 border-l-2 border-primary pl-2 text-muted">{reviewCase.response_message}</p>}
                 </td>
@@ -148,7 +149,7 @@ export function DecisionReviewInbox({ canManage }: { canManage: boolean }) {
                 <td className={`whitespace-nowrap px-3 py-4 ${reviewCase.is_overdue ? 'font-medium text-rose-700' : 'text-muted'}`}>
                   <span className="inline-flex items-center gap-1"><Clock3 className="h-3.5 w-3.5" />{formatDate(reviewCase.response_due_at)}</span>
                 </td>
-                <td className="whitespace-nowrap px-3 py-4 font-medium">{reviewCase.status.replace('_', ' ')}</td>
+                <td className={`whitespace-nowrap px-3 py-4 font-medium ${reviewCase.is_escalated ? 'text-rose-700' : ''}`}>{reviewCase.is_escalated ? 'Escalation due' : reviewCase.status.replace('_', ' ')}</td>
                 <td className="px-3 py-4">
                   {canManage && reviewCase.status === 'SUBMITTED' && <button type="button" disabled={updatingId === reviewCase.id} onClick={() => void transition(reviewCase, 'ACKNOWLEDGED')} className="inline-flex items-center gap-2 rounded border border-border px-3 py-1.5 text-sm font-medium hover:bg-accent disabled:opacity-40"><CheckCircle2 className="h-4 w-4" />Acknowledge</button>}
                   {canManage && reviewCase.status === 'ACKNOWLEDGED' && <button type="button" disabled={updatingId === reviewCase.id} onClick={() => void transition(reviewCase, 'UNDER_REVIEW')} className="inline-flex items-center gap-2 rounded border border-border px-3 py-1.5 text-sm font-medium hover:bg-accent disabled:opacity-40"><FileSearch className="h-4 w-4" />Begin review</button>}
