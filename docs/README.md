@@ -11,6 +11,7 @@ document no longer represents the implemented system, update it or remove it.
 | [PRODUCT_DEFINITION.md](PRODUCT_DEFINITION.md) | Product identity, reasoning thesis, proven boundaries, and open validation gates. |
 | [CURRENT_CAPABILITIES.md](CURRENT_CAPABILITIES.md) | Plain-language account of what the application does today and what it does not do yet. |
 | [SYSTEM_ARCHITECTURE.md](SYSTEM_ARCHITECTURE.md) | Core evidence, fact, policy, release, and graph architecture. |
+| [CODEX_OPERATING_MODEL.md](CODEX_OPERATING_MODEL.md) | Persistent Codex truth model, skill routing, audit boundary, and invariant-test guidance. |
 | [TRANSPARENCY_PRINCIPLES.md](TRANSPARENCY_PRINCIPLES.md) | Subject-facing explanation principles and safety constraints. |
 | [assurance/README.md](assurance/README.md) | Enterprise safety baseline and control evidence index. |
 

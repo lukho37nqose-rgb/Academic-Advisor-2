@@ -1,0 +1,4 @@
+interface:
+  display_name: "Cacisa Migration Guardian"
+  short_description: "Guard schema and deployment migration safety"
+  default_prompt: "Use $cacisa-migration-guardian to review migration safety, rollback risk, and verification evidence."

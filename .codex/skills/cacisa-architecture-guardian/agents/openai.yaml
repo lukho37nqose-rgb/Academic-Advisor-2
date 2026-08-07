@@ -1,0 +1,4 @@
+interface:
+  display_name: "Cacisa Architecture Guardian"
+  short_description: "Protect core and edge architecture boundaries"
+  default_prompt: "Use $cacisa-architecture-guardian to assess whether a change preserves Cacisa architecture boundaries."

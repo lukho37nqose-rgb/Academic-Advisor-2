@@ -1,0 +1,4 @@
+interface:
+  display_name: "Cacisa Reasoning Integrity"
+  short_description: "Keep evidence, claims, facts, and decisions distinct"
+  default_prompt: "Use $cacisa-reasoning-integrity to check epistemic boundaries before changing reasoning behavior."

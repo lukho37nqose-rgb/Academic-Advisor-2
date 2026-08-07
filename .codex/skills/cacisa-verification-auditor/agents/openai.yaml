@@ -1,0 +1,4 @@
+interface:
+  display_name: "Cacisa Verification Auditor"
+  short_description: "Audit claims against exercised evidence"
+  default_prompt: "Use $cacisa-verification-auditor to verify what is proven, exercised, or still untested."
