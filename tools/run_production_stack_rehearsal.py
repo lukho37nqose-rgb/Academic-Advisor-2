@@ -52,8 +52,14 @@ class Configuration:
     app_password: str
 
 
-def _run(command: list[str], *, env: dict[str, str] | None = None, timeout: int | None = None) -> subprocess.CompletedProcess[str]:
-    print("+ " + " ".join(command), flush=True)
+def _run(
+    command: list[str],
+    *,
+    env: dict[str, str] | None = None,
+    timeout: int | None = None,
+    display_command: list[str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    print("+ " + " ".join(display_command or command), flush=True)
     return subprocess.run(command, cwd=PROJECT_ROOT, env=env, text=True, check=True, timeout=timeout)
 
 
@@ -243,6 +249,15 @@ def _docker_environment_args(environment: dict[str, str]) -> list[str]:
     return args
 
 
+def _redacted_docker_environment_args(environment: dict[str, str]) -> list[str]:
+    sensitive_names = {"DATABASE_URL", "GOVERNANCE_PRIVATE_KEY", "PUBLIC_RATE_LIMIT_SALT", "REDIS_URL"}
+    args: list[str] = []
+    for key, value in environment.items():
+        displayed = "***" if key in sensitive_names else value
+        args.extend(["-e", f"{key}={displayed}"])
+    return args
+
+
 def _port_is_listening(host: str, port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
         probe.settimeout(0.5)
@@ -302,7 +317,8 @@ def _run_application_container(docker: str, image_tag: str, configuration: Confi
     container_name = f"cacisa-production-rehearsal-{os.getpid()}"
     subprocess.run([docker, "rm", "-f", container_name], cwd=PROJECT_ROOT, text=True, capture_output=True, timeout=15)
     try:
-        _run([
+        environment = _production_environment(configuration, include_oidc=True)
+        command = [
             docker,
             "run",
             "-d",
@@ -310,9 +326,21 @@ def _run_application_container(docker: str, image_tag: str, configuration: Confi
             container_name,
             "--network",
             "host",
-            *_docker_environment_args(_production_environment(configuration, include_oidc=True)),
+            *_docker_environment_args(environment),
             image_tag,
-        ])
+        ]
+        display_command = [
+            docker,
+            "run",
+            "-d",
+            "--name",
+            container_name,
+            "--network",
+            "host",
+            *_redacted_docker_environment_args(environment),
+            image_tag,
+        ]
+        _run(command, display_command=display_command)
         _wait_for_http("/health/live", timeout_seconds=timeout_seconds)
         _wait_for_http("/health/ready", timeout_seconds=timeout_seconds)
         _http_json("/api/v1/public/policy-guides", expected_status=200)
