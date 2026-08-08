@@ -56,6 +56,17 @@ matching evidence.
   adapters, services, or frontend copy.
 - Preserve Evidence, Claim, Fact, Release, RuleGraph, ReasoningGraph, and
   explanation as distinct concepts.
+- For the implemented decision-time evaluation path, preserve the chain:
+  Evidence -> EvidenceFactProposal -> accepted decision-bound Claim/Fact
+  snapshot -> RuleGraph -> ReasoningGraph. Evidence is preserved source
+  material, not a Fact. Proposal acceptance and governance happen before
+  deterministic evaluation. Claim and Fact rows persisted with a decision are
+  snapshots bound to that decision trace. RuleGraph is the compiled policy
+  structure; ReasoningGraph is the subject-specific evaluation trace. AI,
+  OCR, and extraction assistance may propose or explain, but must not become
+  decision-time adjudication. Historical reasoning must remain traceable to
+  the evidence hash, accepted facts, policy release, and evaluation context
+  used for that decision.
 - Treat AI, OCR, and parsing as proposal assistance unless a cited human review
   path accepts the result.
 - Keep decision-time evaluation deterministic. A model may not decide whether a
@@ -70,6 +81,88 @@ matching evidence.
   a real deployment or rehearsal proves them.
 - Treat SQLite test success as local confidence only. PostgreSQL-specific
   controls, RLS, locking, and immutability require PostgreSQL evidence.
+
+## Student-Facing Explanation Invariants
+
+Cacisa's product thesis is institutional legibility, not merely policy
+transparency. A handbook, rule source, or database record can be available and
+still leave the governed person unable to tell what it means for their
+circumstances. Good product work reduces that interpretive burden while keeping
+the institutional structure visible.
+
+Student-facing surfaces should follow this chain:
+
+```text
+institutional information
+        ->
+governed interpretation
+        ->
+policy application
+        ->
+plain-language explanation
+        ->
+traceability and contestability
+```
+
+Use the governing source as evidence for the explanation, not as a substitute
+for the explanation. Where Cacisa has enough governed information and policy
+structure to explain what a rule means for a person, the interface should do
+that work instead of requiring the person to reconstruct it from policy text.
+A policy citation should answer "Where does this come from?" The Cacisa
+explanation should answer "What does this mean for me?"
+
+For example, prefer a pattern like "You have completed 66 of the 72 credits
+required here. You still need 6 credits before this requirement is satisfied.
+Source: Faculty Handbook, section ..." over a bare "Requirement 4.2.1(b) not
+satisfied. See Faculty Handbook section ..." This is a design principle, not a
+domain-specific rule about credits.
+
+Care in Cacisa means reducing avoidable interpretive and administrative burden
+while preserving truth. It does not mean vague reassurance, euphemism, hiding
+adverse outcomes, anthropomorphic friendliness, changing policy meaning, or
+avoiding precise institutional terminology where precision is necessary. The
+interface should behave more like a knowledgeable person explaining an
+institutional situation than a database or handbook presenting raw categories.
+
+Student-facing language should distinguish the person from the state of the
+institutional record. State adverse conclusions clearly when they are supported,
+but locate the problem accurately: in the policy requirement, available
+information, a record conflict, missing information, or an institutional
+decision. Prefer "We do not currently have enough information to determine
+this" over blaming the person for an incomplete record, and prefer "This
+requirement is not yet satisfied because..." over unnecessary personal
+judgement.
+
+Institutional uncertainty must be surfaced, not linguistically converted into
+false certainty. Provisional, conflicting, incomplete, human-review, and
+bounded-confidence states must remain visible in student explanations. Do not
+turn a needs-review state into pass/fail merely because binary rendering is
+easier.
+
+Plain language must preserve provenance. A clearer explanation must still be
+traceable to the governing source, accepted information, relevant requirement,
+resulting conclusion, and historical decision trace where appropriate.
+
+Care includes contestability. Where supported by the product, explanations
+should help the governed person understand whether a disagreement concerns the
+underlying source record, Cacisa's accepted or interpreted information, the
+policy requirement, the application of that policy, or an unresolved conflict
+or missing record. Do not claim workflows exist where they do not yet exist.
+
+Use progressive disclosure for technical detail. Internal terms such as
+EvidenceFactProposal, ReasoningGraph, evaluation_context, database IDs, and
+internal fact keys belong in technical or advanced detail where useful, not in
+the primary student explanation. The normal student hierarchy is:
+
+```text
+What is happening?
+Why?
+What information was used?
+Where does the rule or information come from?
+What can I do?
+```
+
+The technical trace can sit underneath that hierarchy.
 
 ## Skill Routing
 
