@@ -122,6 +122,14 @@ python -m mypy --explicit-package-bases app
 python -m uvicorn app.api:app --reload
 ```
 
+The general suite may use SQLite for fast local checks. PostgreSQL-specific
+RLS, catalog-role, JSONB, and append-only trigger evidence requires the
+disposable PostgreSQL rehearsal:
+
+```powershell
+python tools/run_postgres_rls_rehearsal.py
+```
+
 Refresh dependencies only through a reviewed change, then regenerate both
 artifacts:
 
