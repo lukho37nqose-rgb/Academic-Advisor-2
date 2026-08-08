@@ -1,5 +1,6 @@
 import {
   AlertTriangle,
+  ArrowRight,
   CheckCircle2,
   ClipboardList,
   FileText,
@@ -86,6 +87,12 @@ function requirementStatus(value: unknown): StatusPresentation {
   if (value === false) return { label: 'Not satisfied', className: 'border-rose-200 bg-rose-50 text-rose-800' };
   if (value === 'NEEDS_MANUAL_REVIEW') return { label: 'Needs review', className: 'border-amber-200 bg-amber-50 text-amber-800' };
   return { label: 'Unclear', className: 'border-slate-200 bg-slate-50 text-slate-700' };
+}
+
+function subjectInformationHref(fact?: GraphNode) {
+  const informationId = nodeData(fact).information_id;
+  if (typeof informationId !== 'string' || !informationId) return null;
+  return `?experience=subject&information=${encodeURIComponent(informationId)}#information-item-${encodeURIComponent(informationId)}`;
 }
 
 function positionPresentation(conclusion?: GraphNode): PositionPresentation {
@@ -175,6 +182,7 @@ function PolicyCondition({ condition, fact }: { condition: GraphNode; fact?: Gra
   const factData = nodeData(fact);
   const status = requirementStatus(conditionData.passed);
   const citation = typeof conditionData.citation === 'string' ? conditionData.citation : '';
+  const informationHref = subjectInformationHref(fact);
 
   return (
     <article className="grid gap-4 border border-border p-4 md:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)]">
@@ -189,6 +197,7 @@ function PolicyCondition({ condition, fact }: { condition: GraphNode; fact?: Gra
         <p className="text-xs font-semibold uppercase tracking-normal text-muted">Student information</p>
         <p className="mt-1 text-sm">{fact ? displayValue(factData.resolved_value) : 'Not recorded in this trace'}</p>
         {fact && <p className="mt-1 text-xs text-muted">{cleanLabel(fact.label)}</p>}
+        {informationHref && <a href={informationHref} className="mt-2 inline-flex items-center gap-1 text-xs font-semibold underline underline-offset-4">See where this information came from <ArrowRight aria-hidden="true" className="h-3.5 w-3.5" /></a>}
       </div>
       <div>
         <p className="text-xs font-semibold uppercase tracking-normal text-muted">Policy requirement</p>
@@ -202,12 +211,14 @@ function EvidenceItem({ fact, fallbackContext }: { fact: GraphNode; fallbackCont
   const data = nodeData(fact);
   const source = data.source_system ?? fallbackContext?.source_system;
   const asOf = formatDateTime(data.source_as_of ?? fallbackContext?.source_as_of);
+  const informationHref = subjectInformationHref(fact);
   return (
     <article className="border-l-2 border-border pl-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h4 className="font-semibold">{cleanLabel(fact.label)}</h4>
           <p className="mt-1 text-sm text-muted">Value used: {displayValue(data.resolved_value)}</p>
+          {informationHref && <a href={informationHref} className="mt-2 inline-flex items-center gap-1 text-xs font-semibold underline underline-offset-4">See where this information came from <ArrowRight aria-hidden="true" className="h-3.5 w-3.5" /></a>}
         </div>
         <span className="text-sm font-medium text-primary">{recordStateLabel(data.record_state ?? fallbackContext?.record_state)}</span>
       </div>

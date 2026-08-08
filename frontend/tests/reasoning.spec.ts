@@ -1,6 +1,9 @@
 import { test, expect, type Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 
+const acceptedInformationId = 'info_completed_credits';
+const pendingInformationId = 'info_registration_pending';
+
 type SessionCapabilities = {
     experience: 'staff' | 'subject';
     role: string;
@@ -60,6 +63,49 @@ const mockGraphEligible = {
     },
     edges: [{ source_id: 'gn_fact_1', target_id: 'gn_eval_1', relation: 'evaluates_to', weight: 1 }]
 };
+
+const mockGraphWithAcceptedInformation = {
+    id: "trace_curriculum",
+    subject_id: "student_1",
+    rule_graph_id: "rg_curriculum",
+    nodes: {
+        "gn_fact_credits": { id: "gn_fact_credits", type: "fact", label: "Fact: Completed credits", data: { resolved_value: 252, source_authority: 'official_system', record_state: 'confirmed', source_system: 'PeopleSoft', source_as_of: '2026-07-24T00:00:00Z', information_id: acceptedInformationId }, computed_confidence: 1.0 },
+        "gn_eval_credits": { id: "gn_eval_credits", type: "rule_evaluation", label: "Credits completed", data: { passed: true, expected_condition: ">=", expected_value: 240, citation: "Progression Policy 2026, section 4.2" }, computed_confidence: 1.0 },
+        "gn_conclusion": { id: "gn_conclusion", type: "conclusion", label: "Final Conclusion", data: { overall_passed: true }, computed_confidence: 1.0 }
+    },
+    edges: [{ source_id: 'gn_fact_credits', target_id: 'gn_eval_credits', relation: 'evaluates_to', weight: 1 }],
+    evaluation_context: { domain_id: 'dom_subject', release_version: '2026.1', source_authority: 'official_system', record_state: 'confirmed', source_system: 'PeopleSoft', source_as_of: '2026-07-24T00:00:00Z' },
+};
+
+const mockSubjectInformation = [{
+    information_id: acceptedInformationId,
+    domain_id: 'dom_subject',
+    domain_name: 'Academic progression',
+    label: 'Completed credits',
+    value: 252,
+    status: 'accepted',
+    status_label: 'Accepted information',
+    status_explanation: "This information has passed the institution's evidence governance step and can be used in decision traces.",
+    proposed_at: '2026-07-24T08:30:00Z',
+    reviewed_at: '2026-07-24T09:00:00Z',
+    source: { authority: 'official_system', record_state: 'confirmed', type: 'system_record', system: 'PeopleSoft', as_of: '2026-07-24T00:00:00Z', captured_at: '2026-07-24T08:30:00Z', reference: 'Transcript page 2' },
+    used_in: [{ trace_id: 'trace_curriculum', domain_id: 'dom_subject', position_label: 'Politics progression', decision: 'ELIGIBLE', release_version: '2026.1', evaluated_at: '2026-07-25T08:30:00Z', fact_status: 'resolved' }],
+    governed_person_label: 'student',
+}, {
+    information_id: pendingInformationId,
+    domain_id: 'dom_subject',
+    domain_name: 'Academic progression',
+    label: 'Registration status',
+    value: 'pending departmental confirmation',
+    status: 'conflict',
+    status_label: 'Needs review',
+    status_explanation: 'Cacisa has more than one pending interpretation for this information. It should not be treated as settled until governance resolves it.',
+    proposed_at: '2026-07-25T08:30:00Z',
+    reviewed_at: null,
+    source: { authority: 'institutional_working_record', record_state: 'provisional', type: 'student_submission', system: 'Course system', as_of: null, captured_at: '2026-07-25T08:30:00Z', reference: 'Student submission form' },
+    used_in: [],
+    governed_person_label: 'student',
+}];
 
 // Mock reasoning graph representing a manual review
 const mockGraphManualReview = {
@@ -198,6 +244,9 @@ test.describe('Workspace access boundaries', () => {
     });
 
     test('shows a subject certified institutional context without staff-only references', async ({ page }) => {
+        await page.route('**/api/v1/subject/information', async route => {
+            await route.fulfill({ json: { items: mockSubjectInformation } });
+        });
         await page.route('**/api/v1/subject/current-positions', async route => {
             await route.fulfill({ json: { items: [{
                 trace_id: 'trace_curriculum', domain_id: 'dom_subject', domain_name: 'Academic progression',
@@ -231,6 +280,8 @@ test.describe('Workspace access boundaries', () => {
         });
         await mockSessionCapabilities(page, subjectSession);
         await page.goto('/', { waitUntil: 'domcontentloaded' });
+        await expect(page.getByRole('heading', { name: 'Information Cacisa uses about you' })).toBeVisible();
+        await expect(page.getByRole('heading', { name: 'Completed credits' })).toBeVisible();
         await expect(page.getByRole('heading', { name: 'Your institutional timeline' })).toBeVisible();
         await expect(page.getByRole('heading', { name: 'Your current positions' })).toBeVisible();
         await expect(page.getByRole('heading', { name: 'Politics progression' })).toBeVisible();
@@ -246,6 +297,9 @@ test.describe('Workspace access boundaries', () => {
     });
 
     test('explains when a student position cannot be loaded', async ({ page }) => {
+        await page.route('**/api/v1/subject/information', async route => {
+            await route.fulfill({ json: { items: [] } });
+        });
         await page.route('**/api/v1/subject/current-positions', async route => {
             await route.fulfill({ status: 503, json: {} });
         });
@@ -259,6 +313,49 @@ test.describe('Workspace access boundaries', () => {
         await page.goto('/', { waitUntil: 'domcontentloaded' });
         await expect(page.getByRole('alert')).toContainText('institutional service could not complete that request');
         await expect(page.getByText('Network Error')).toHaveCount(0);
+    });
+
+    test('shows subject information provenance and links it to the current position', async ({ page }) => {
+        await page.route('**/api/v1/subject/information', async route => {
+            await route.fulfill({ json: { items: mockSubjectInformation } });
+        });
+        await page.route('**/api/v1/subject/current-positions', async route => {
+            await route.fulfill({ json: { items: [{
+                trace_id: 'trace_curriculum', domain_id: 'dom_subject', domain_name: 'Academic progression',
+                position_type: 'curriculum', position_label: 'Politics progression', decision: 'ELIGIBLE',
+                release_version: '2026.1', evaluated_at: '2026-07-25T08:30:00Z', source_authority: 'official_system', record_state: 'confirmed', source_system: 'PeopleSoft', source_as_of: '2026-07-24T00:00:00Z',
+            }] } });
+        });
+        await page.route('**/api/v1/institutional-timeline', async route => {
+            await route.fulfill({ json: { items: [] } });
+        });
+        await page.route('**/api/v1/public/policy-guides', async route => {
+            await route.fulfill({ json: { items: [] } });
+        });
+        await page.route('**/api/v1/reasoning/trace_curriculum', async route => {
+            await route.fulfill({ json: mockGraphWithAcceptedInformation });
+        });
+        await mockSessionCapabilities(page, subjectSession);
+        await page.goto('/', { waitUntil: 'domcontentloaded' });
+
+        await expect(page.getByRole('heading', { name: 'Information Cacisa uses about you' })).toBeVisible();
+        await expect(page.getByText('Accepted for decisions')).toBeVisible();
+        await expect(page.getByRole('heading', { name: 'Completed credits' })).toBeVisible();
+        await expect(page.getByText('Cacisa currently understands this as 252.')).toBeVisible();
+        await expect(page.getByRole('heading', { name: 'Registration status' })).toBeVisible();
+        await expect(page.getByText('Needs review')).toBeVisible();
+        await page.locator('summary').filter({ hasText: 'See where this came from' }).first().click();
+        const acceptedInformation = page.locator(`#information-item-${acceptedInformationId}`);
+        await expect(acceptedInformation).toContainText('PeopleSoft');
+        await expect(acceptedInformation).toContainText('Transcript page 2');
+        await expect(acceptedInformation).toContainText('Politics progression: requirements met under release 2026.1');
+
+        await page.getByRole('link', { name: 'Open current position' }).click();
+        await expect(page.getByRole('heading', { name: 'You meet the requirements to continue.' })).toBeVisible();
+        await expect(page.getByRole('link', { name: 'See where this information came from' }).first()).toHaveAttribute('href', `?experience=subject&information=${acceptedInformationId}#information-item-${acceptedInformationId}`);
+        await page.getByRole('link', { name: 'See where this information came from' }).first().click();
+        await expect(page.getByRole('heading', { name: 'Information Cacisa uses about you' })).toBeVisible();
+        await expect(page.locator(`#information-item-${acceptedInformationId}`)).toContainText('Completed credits');
     });
 
     test('renders a personal view of how the common policy applies to an eligible trace', async ({ page }) => {

@@ -2631,6 +2631,23 @@ async def list_subject_current_positions(
     return {"items": positions}
 
 
+@app.get("/api/v1/subject/information")
+async def list_subject_information(
+    user: UserIdentity = Depends(require_role([Role.SUBJECT])),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """List the subject-safe information Cacisa holds and the decisions using it."""
+    if not user.subject_id:
+        raise HTTPException(status_code=401, detail="Subject identity is missing from the access token.")
+    items = await ReasoningRepository(db).list_subject_information(
+        tenant_id=user.tenant_id,
+        subject_id=user.subject_id,
+    )
+    # A subject token must never discover an unassigned domain through fact provenance.
+    items = [item for item in items if item["domain_id"] in user.domain_ids]
+    return {"items": items}
+
+
 @app.post("/api/v1/decision-reviews", status_code=201)
 async def submit_decision_review(
     submission: DecisionReviewSubmission,

@@ -124,6 +124,40 @@ export interface SubjectCurrentPosition {
     provisional_escalation_by?: string | null;
 }
 
+export interface SubjectInformationUse {
+    trace_id: string;
+    domain_id: string;
+    position_label: string;
+    decision: 'ELIGIBLE' | 'INELIGIBLE' | 'NEEDS_MANUAL_REVIEW';
+    release_version: string;
+    evaluated_at: string | null;
+    fact_status: string;
+}
+
+export interface SubjectInformationItem {
+    information_id: string;
+    domain_id: string;
+    domain_name: string;
+    label: string;
+    value: unknown;
+    status: 'accepted' | 'provisional' | 'conflict';
+    status_label: string;
+    status_explanation: string;
+    proposed_at: string | null;
+    reviewed_at: string | null;
+    source: {
+        authority: 'official_system' | 'institutional_working_record' | 'subject_submitted' | string;
+        record_state: 'confirmed' | 'provisional' | string;
+        type: string;
+        system: string | null;
+        as_of: string | null;
+        captured_at: string | null;
+        reference: string | null;
+    };
+    used_in: SubjectInformationUse[];
+    governed_person_label?: string;
+}
+
 export interface ProviderTenantControl {
     tenant_id: string;
     tenant_name: string;
@@ -835,6 +869,11 @@ export const fetchReasoningGraph = async (graphId: string): Promise<ReasoningGra
 
 export const fetchSubjectCurrentPositions = async (): Promise<SubjectCurrentPosition[]> => {
     const response = await apiClient.get<{ items: SubjectCurrentPosition[] }>('/subject/current-positions');
+    return response.data.items;
+}
+
+export const fetchSubjectInformation = async (): Promise<SubjectInformationItem[]> => {
+    const response = await apiClient.get<{ items: SubjectInformationItem[] }>('/subject/information');
     return response.data.items;
 }
 

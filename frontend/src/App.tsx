@@ -32,6 +32,7 @@ const PolicyAmbiguityRegister = lazy(async () => ({ default: (await import('./co
 const PolicyReview = lazy(async () => ({ default: (await import('./components/PolicyReview')).PolicyReview }));
 const PublicPolicyGuide = lazy(async () => ({ default: (await import('./components/PublicPolicyGuide')).PublicPolicyGuide }));
 const SubjectPositionView = lazy(async () => ({ default: (await import('./components/SubjectPositionView')).SubjectPositionView }));
+const SubjectInformationView = lazy(async () => ({ default: (await import('./components/SubjectInformationView')).SubjectInformationView }));
 const SubjectInstitutionalTimeline = lazy(async () => ({ default: (await import('./components/SubjectInstitutionalTimeline')).SubjectInstitutionalTimeline }));
 const SubjectTransparencyDashboard = lazy(async () => ({ default: (await import('./components/SubjectTransparencyDashboard')).SubjectTransparencyDashboard }));
 const ShadowCalibration = lazy(async () => ({ default: (await import('./components/ShadowCalibration')).ShadowCalibration }));
@@ -110,6 +111,7 @@ function App() {
   const searchParameters = new URLSearchParams(window.location.search);
   const requestedSubjectExperience = searchParameters.get('experience') === 'subject';
   const requestedTraceId = searchParameters.get('trace');
+  const requestedInformationId = searchParameters.get('information');
 
   useEffect(() => {
     if (!isOidcConfigured) return;
@@ -189,7 +191,7 @@ function App() {
             <h1 className="text-xl font-semibold">{requestedTraceId ? 'Decision review' : 'Your institutional information'}</h1>
           </header>
           <Suspense fallback={<p className="py-8 text-sm text-muted">Loading your information...</p>}>
-            {!requestedTraceId && <div className="flex flex-col gap-10 py-6"><SubjectTransparencyDashboard /><SubjectInstitutionalTimeline /><PublicPolicyGuide /></div>}
+            {!requestedTraceId && <div className="flex flex-col gap-10 py-6"><SubjectInformationView highlightInformationId={requestedInformationId} /><SubjectTransparencyDashboard /><SubjectInstitutionalTimeline /><PublicPolicyGuide /></div>}
             {requestedTraceId && graphLoading && <p className="py-8 text-sm text-muted">Loading your decision...</p>}
             {requestedTraceId && graphError && <div role="alert" className="mt-6 border border-rose-200 bg-rose-50 px-3 py-3 text-sm text-rose-700">{graphError}</div>}
             {requestedTraceId && !graphLoading && !graphError && !graph && <p className="py-8 text-sm text-muted">No decision was selected.</p>}
