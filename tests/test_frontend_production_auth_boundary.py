@@ -23,3 +23,9 @@ def test_synthetic_oidc_values_are_limited_to_the_e2e_runner() -> None:
     assert "https://your-tenant.auth0.com" in e2e_runner
     assert "VITE_OIDC_CLIENT_ID" in e2e_runner
     assert "your-client-id" in e2e_runner
+
+
+def test_frontend_does_not_default_production_api_calls_to_localhost() -> None:
+    client_source = (REPO_ROOT / "frontend" / "src" / "api" / "client.ts").read_text(encoding="utf-8")
+
+    assert "import.meta.env.DEV ? 'http://localhost:8000/api/v1' : '/api/v1'" in client_source
