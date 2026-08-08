@@ -33,6 +33,7 @@ document no longer represents the implemented system, update it or remove it.
 | Document | Purpose |
 | --- | --- |
 | [PRODUCTION_DEPLOYMENT.md](PRODUCTION_DEPLOYMENT.md) | Production configuration and release gates. |
+| [INSTITUTIONAL_DEPLOYMENT_REHEARSAL.md](INSTITUTIONAL_DEPLOYMENT_REHEARSAL.md) | Non-production institutional rehearsal contract, preflight, smoke checks, and dependency evidence boundaries. |
 | [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md) | Institution-controlled deployment sequence. |
 | [DEPLOYMENT_SURFACES.md](DEPLOYMENT_SURFACES.md) | Public, reference, staging, tenant, and provider surfaces. |
 | [AWS_PLATFORM_ARCHITECTURE.md](AWS_PLATFORM_ARCHITECTURE.md) | Recommended AWS account and service architecture. |
