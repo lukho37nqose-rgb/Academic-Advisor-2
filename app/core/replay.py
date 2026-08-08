@@ -74,9 +74,31 @@ async def verify_replay(
             status="FAILED",
             reason="Stored resolved facts do not match the independently accepted evidence facts.",
         )
+    return await verify_decision_snapshot(
+        stored_graph=stored_graph,
+        rule_graph=rule_graph,
+        stored_facts=stored_facts,
+        stored_decision=stored_decision,
+        stored_confidence=stored_confidence,
+    )
+
+
+async def verify_decision_snapshot(
+    *,
+    stored_graph: ReasoningGraph,
+    rule_graph: RuleGraph,
+    stored_facts: list[Fact],
+    stored_decision: str,
+    stored_confidence: float,
+) -> ReplayVerification:
+    """Verify a trace from the decision-bound facts it actually persisted."""
+    context = stored_graph.evaluation_context
+    if context is None:
+        return ReplayVerification(status="FAILED", reason="The stored trace lacks an evaluation context.")
 
     recomputed_graph = generate_reasoning_graph(context, rule_graph, stored_facts)
-    recomputed_graph.explanation = await format_explanation(recomputed_graph)
+    if stored_graph.explanation is not None:
+        recomputed_graph.explanation = await format_explanation(recomputed_graph)
 
     stored_data = _canonical(stored_graph)
     recomputed_data = _canonical(recomputed_graph)

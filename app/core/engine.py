@@ -29,16 +29,20 @@ def _evaluate_leaf(node: ExpressionNode, facts: Dict[str, Fact], graph: Reasonin
     if fact:
         fact_node_id = f"gn_fact_{fact.id}"
         if fact_node_id not in graph.nodes:
+            fact_source_as_of = fact.source_as_of or context.source_as_of
             graph.add_node(GraphNode(
                 id=fact_node_id,
                 type="fact",
                 label=f"Fact: {fact.target_path}",
                 data={
                     "resolved_value": fact.resolved_value,
-                    "source_authority": context.source_authority,
-                    "record_state": context.record_state,
-                    "source_system": context.source_system,
-                    "source_as_of": context.source_as_of.isoformat() if context.source_as_of else None,
+                    "source_authority": fact.source_authority or context.source_authority,
+                    "record_state": fact.record_state or context.record_state,
+                    "source_system": fact.source_system or context.source_system,
+                    "source_record_version": fact.source_record_version or context.source_record_version,
+                    "source_as_of": fact_source_as_of.isoformat() if fact_source_as_of else None,
+                    "recorded_at": fact.recorded_at.isoformat() if fact.recorded_at else None,
+                    "accepted_at": fact.accepted_at.isoformat() if fact.accepted_at else None,
                     "information_id": stable_information_reference(
                         tenant_id=context.tenant_id,
                         domain_id=context.domain_id,

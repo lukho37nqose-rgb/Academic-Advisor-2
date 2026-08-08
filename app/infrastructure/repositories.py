@@ -13,7 +13,7 @@ import logging
 import uuid
 from datetime import date, datetime, timedelta, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import delete, func, text, exists
+from sqlalchemy import delete, func, text, exists, or_
 from sqlalchemy.future import select
 from sqlalchemy.exc import IntegrityError
 
@@ -71,6 +71,12 @@ from app.services.access_controls import (
     support_request_retention_days,
 )
 from app.services.background_job_signals import BackgroundJobSignalError, publish_background_job_signal
+from app.services.institutional_position import (
+    InstitutionalPosition,
+    InstitutionalPositionFact,
+    PositionSelectionConflictError,
+    utc_now,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -3969,6 +3975,151 @@ class EvidenceFactProposalRepository:
             )
         return claims, facts
 
+
+def _as_aware_utc(value: datetime) -> datetime:
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+
+class InstitutionalPositionRepository:
+    """Select governed accepted information for one subject at an effective time."""
+
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    async def position_for(
+        self,
+        *,
+        tenant_id: str,
+        domain_id: str,
+        subject_id: str,
+        effective_at: datetime,
+        known_at: datetime | None = None,
+    ) -> InstitutionalPosition:
+        effective_cutoff = _as_aware_utc(effective_at)
+        known_cutoff = _as_aware_utc(known_at or utc_now())
+        result = await self.session.execute(
+            select(DBEvidenceFactProposal, DBEvidence)
+            .join(DBEvidence, DBEvidence.id == DBEvidenceFactProposal.evidence_id)
+            .where(
+                DBEvidenceFactProposal.tenant_id == tenant_id,
+                DBEvidenceFactProposal.domain_id == domain_id,
+                DBEvidenceFactProposal.subject_id == subject_id,
+                DBEvidenceFactProposal.status == "ACCEPTED",
+                DBEvidence.tenant_id == tenant_id,
+                DBEvidence.domain_id == domain_id,
+                DBEvidence.subject_id == subject_id,
+                DBEvidence.record_state == "confirmed",
+                DBEvidence.source_as_of.is_not(None),
+                DBEvidence.source_as_of <= effective_cutoff,
+                or_(DBEvidence.timestamp.is_(None), DBEvidence.timestamp <= known_cutoff),
+                or_(DBEvidenceFactProposal.reviewed_at.is_(None), DBEvidenceFactProposal.reviewed_at <= known_cutoff),
+                ~exists().where(DBEvidenceDeletionEvent.evidence_id == DBEvidence.id),
+            )
+            .order_by(
+                DBEvidenceFactProposal.target_path,
+                DBEvidence.source_as_of.desc(),
+                DBEvidenceFactProposal.reviewed_at.desc(),
+                DBEvidence.timestamp.desc(),
+                DBEvidenceFactProposal.id.desc(),
+            )
+        )
+        rows = result.all()
+        facts_by_path: dict[str, list[tuple[DBEvidenceFactProposal, DBEvidence]]] = {}
+        for proposal, evidence in rows:
+            facts_by_path.setdefault(cast(str, proposal.target_path), []).append((proposal, evidence))
+
+        selected: list[InstitutionalPositionFact] = []
+        for target_path, candidates in facts_by_path.items():
+            best_proposal, best_evidence = candidates[0]
+            best_effective = _as_aware_utc(cast(datetime, best_evidence.source_as_of))
+            same_effective = [
+                (proposal, evidence)
+                for proposal, evidence in candidates
+                if _as_aware_utc(cast(datetime, evidence.source_as_of)) == best_effective
+            ]
+            recorded_at = cast(Optional[datetime], best_evidence.timestamp)
+            accepted_at = cast(Optional[datetime], best_proposal.reviewed_at)
+            values = {
+                json.dumps(proposal.asserted_value, sort_keys=True, default=str)
+                for proposal, _evidence in same_effective
+            }
+            if len(values) > 1:
+                raise PositionSelectionConflictError(
+                    f"Conflicting accepted facts are effective for target path '{target_path}'."
+                )
+            selected.append(
+                InstitutionalPositionFact(
+                    id="fact_" + cast(str, best_proposal.id),
+                    target_path=target_path,
+                    resolved_value=best_proposal.asserted_value,
+                    final_confidence=1.0,
+                    supporting_claims=["claim_" + cast(str, best_proposal.id)],
+                    source_authority=cast(Any, best_evidence.source_authority),
+                    source_system=cast(Optional[str], best_evidence.source_system),
+                    source_record_version=cast(Optional[str], best_evidence.source_record_version),
+                    source_as_of=best_effective,
+                    recorded_at=_as_aware_utc(recorded_at) if recorded_at else None,
+                    accepted_at=_as_aware_utc(accepted_at) if accepted_at else None,
+                    evidence_id=cast(str, best_evidence.id),
+                    proposal_id=cast(str, best_proposal.id),
+                    source_locator=cast(Optional[str], best_proposal.source_locator),
+                )
+            )
+
+        omitted_counts = await self._omitted_counts(
+            tenant_id=tenant_id,
+            domain_id=domain_id,
+            subject_id=subject_id,
+            effective_at=effective_cutoff,
+            known_at=known_cutoff,
+        )
+        return InstitutionalPosition(
+            tenant_id=tenant_id,
+            domain_id=domain_id,
+            subject_id=subject_id,
+            effective_at=effective_cutoff,
+            known_at=known_cutoff,
+            facts=selected,
+            omitted_counts=omitted_counts,
+            context_kind="historical" if known_at is not None and known_cutoff < utc_now() else "actual",
+        )
+
+    async def _omitted_counts(
+        self,
+        *,
+        tenant_id: str,
+        domain_id: str,
+        subject_id: str,
+        effective_at: datetime,
+        known_at: datetime,
+    ) -> dict[str, int]:
+        result = await self.session.execute(
+            select(DBEvidenceFactProposal.status, DBEvidence.record_state, func.count())
+            .join(DBEvidence, DBEvidence.id == DBEvidenceFactProposal.evidence_id)
+            .where(
+                DBEvidenceFactProposal.tenant_id == tenant_id,
+                DBEvidenceFactProposal.domain_id == domain_id,
+                DBEvidenceFactProposal.subject_id == subject_id,
+                DBEvidence.tenant_id == tenant_id,
+                DBEvidence.domain_id == domain_id,
+                DBEvidence.subject_id == subject_id,
+                or_(DBEvidence.source_as_of.is_(None), DBEvidence.source_as_of <= effective_at),
+                or_(DBEvidence.timestamp.is_(None), DBEvidence.timestamp <= known_at),
+                ~exists().where(DBEvidenceDeletionEvent.evidence_id == DBEvidence.id),
+            )
+            .group_by(DBEvidenceFactProposal.status, DBEvidence.record_state)
+        )
+        counts: dict[str, int] = {}
+        for status, record_state, count in result.all():
+            if status != "ACCEPTED":
+                counts[str(status).lower()] = counts.get(str(status).lower(), 0) + int(count)
+            elif record_state != "confirmed":
+                counts[str(record_state).lower()] = counts.get(str(record_state).lower(), 0) + int(count)
+            elif record_state == "confirmed":
+                continue
+        return counts
+
+
 class ReleaseRepository:
     """Async repository for fetching immutable releases and compiled RuleGraphs."""
     
@@ -4019,6 +4170,24 @@ class ReleaseRepository:
             .order_by(DBRelease.effective_from.desc(), DBRelease.created_at.desc(), DBRelease.version.desc())
         )
         return [self._release_from_row(row) for row in result.scalars().all()]
+
+    async def get_applicable_release(
+        self,
+        *,
+        domain_id: str,
+        as_of_date: date,
+        applicability_context: Dict[str, str],
+    ) -> Optional[Release]:
+        releases = await self.list_domain_releases(domain_id)
+        for release in releases:
+            if release.effective_from is not None and as_of_date < release.effective_from:
+                continue
+            if release.effective_until is not None and as_of_date > release.effective_until:
+                continue
+            if any(applicability_context.get(key) not in values for key, values in release.applicability.items()):
+                continue
+            return release
+        return None
 
     @staticmethod
     def _periods_overlap(
