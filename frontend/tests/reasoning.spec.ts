@@ -54,11 +54,11 @@ const mockGraphEligible = {
     subject_id: "student_1",
     rule_graph_id: "rg_1",
     nodes: {
-        "gn_fact_1": { id: "gn_fact_1", type: "fact", label: "Fact: academic.gpa", data: { resolved_value: 3.5 }, computed_confidence: 1.0 },
+        "gn_fact_1": { id: "gn_fact_1", type: "fact", label: "Fact: academic.gpa", data: { resolved_value: 3.5, source_authority: 'official_system', record_state: 'confirmed', source_system: 'PeopleSoft', source_as_of: '2026-07-24T00:00:00Z' }, computed_confidence: 1.0 },
         "gn_eval_1": { id: "gn_eval_1", type: "rule_evaluation", label: "Check GPA", data: { passed: true, expected_condition: ">=", expected_value: 3.0, citation: "Academic Progress Policy 2026, section 3.1" }, computed_confidence: 1.0 },
         "gn_conclusion": { id: "gn_conclusion", type: "conclusion", label: "Final Conclusion", data: { overall_passed: true }, computed_confidence: 1.0 }
     },
-    edges: []
+    edges: [{ source_id: 'gn_fact_1', target_id: 'gn_eval_1', relation: 'evaluates_to', weight: 1 }]
 };
 
 // Mock reasoning graph representing a manual review
@@ -67,11 +67,11 @@ const mockGraphManualReview = {
     subject_id: "student_2",
     rule_graph_id: "rg_2",
     nodes: {
-        "gn_fact_2": { id: "gn_fact_2", type: "fact", label: "Fact: academic.gpa", data: { resolved_value: "needs_human_review" }, computed_confidence: 0.5 },
+        "gn_fact_2": { id: "gn_fact_2", type: "fact", label: "Fact: academic.gpa", data: { resolved_value: "needs_human_review", source_authority: 'institutional_working_record', record_state: 'provisional', source_system: 'Course system' }, computed_confidence: 0.5 },
         "gn_eval_2": { id: "gn_eval_2", type: "rule_evaluation", label: "Check GPA", data: { passed: "NEEDS_MANUAL_REVIEW", expected_condition: ">=", expected_value: 3.0 }, computed_confidence: 0.5 },
         "gn_conclusion": { id: "gn_conclusion", type: "conclusion", label: "Final Conclusion", data: { overall_passed: "NEEDS_MANUAL_REVIEW" }, computed_confidence: 0.5 }
     },
-    edges: []
+    edges: [{ source_id: 'gn_fact_2', target_id: 'gn_eval_2', relation: 'evaluates_to', weight: 0.5 }]
 };
 
 const mockGraphIncomplete = {
@@ -268,11 +268,20 @@ test.describe('Workspace access boundaries', () => {
         await mockSessionCapabilities(page, subjectSession);
         await page.goto('/?experience=subject&trace=trace_1', { waitUntil: 'domcontentloaded' });
 
-        await expect(page.getByRole('heading', { name: 'Your current position' })).toBeVisible();
         await expect(page.getByRole('heading', { name: 'You meet the requirements to continue.' })).toBeVisible();
-        await expect(page.getByRole('heading', { name: 'Policy conditions considered' })).toBeVisible();
-        await expect(page.getByLabel('Policy conditions considered').getByText('Check GPA', { exact: true })).toBeVisible();
-        await expect(page.getByLabel('Policy conditions considered').getByText('Policy source: Academic Progress Policy 2026, section 3.1')).toBeVisible();
+        await expect(page.getByText('Most important condition: Check GPA is satisfied.')).toBeVisible();
+        await expect(page.getByRole('heading', { name: 'Why Cacisa reached this position' })).toBeVisible();
+        await expect(page.getByLabel('Why Cacisa reached this position').getByText('Check GPA', { exact: true })).toBeVisible();
+        await expect(page.getByLabel('Why Cacisa reached this position').getByText('Student information')).toBeVisible();
+        await expect(page.getByLabel('Why Cacisa reached this position').getByText('3.5')).toBeVisible();
+        await expect(page.getByLabel('Why Cacisa reached this position').getByText('Policy requirement')).toBeVisible();
+        await expect(page.getByLabel('Why Cacisa reached this position').getByText('>= 3')).toBeVisible();
+        await expect(page.getByLabel('Why Cacisa reached this position').getByText('Policy source: Academic Progress Policy 2026, section 3.1')).toBeVisible();
+        await expect(page.getByRole('heading', { name: 'Information Cacisa used' })).toBeVisible();
+        await expect(page.getByText('Official institutional record')).toBeVisible();
+        await expect(page.getByRole('heading', { name: 'Published policy sources' })).toBeVisible();
+        await expect(page.getByRole('link', { name: 'View full trace' })).toBeVisible();
+        await expect(page.getByRole('heading', { name: 'What you can do' })).toBeVisible();
         await expect(page.getByText('Confidence Score: 100.0%')).toHaveCount(0);
     });
 
@@ -284,7 +293,7 @@ test.describe('Workspace access boundaries', () => {
         await page.goto('/?experience=subject&trace=trace_2', { waitUntil: 'domcontentloaded' });
 
         await expect(page.getByRole('heading', { name: 'Your situation needs human consideration.' })).toBeVisible();
-        await expect(page.getByText('This is not a final decision.')).toBeVisible();
+        await expect(page.getByText(/does not support an automatic final position/)).toBeVisible();
         await expect(page.getByText('Needs Manual Review')).toHaveCount(0);
     });
 
@@ -296,7 +305,7 @@ test.describe('Workspace access boundaries', () => {
         await page.goto('/?experience=subject&trace=trace_incomplete', { waitUntil: 'domcontentloaded' });
 
         await expect(page.getByRole('heading', { name: 'Your position is currently unclear.' })).toBeVisible();
-        await expect(page.getByText('We cannot determine your position automatically based on the available information.')).toBeVisible();
+        await expect(page.getByText('The trace does not contain enough governed information to present a final policy position.')).toBeVisible();
         await expect(page.getByText('One or more evaluated conditions are not yet satisfied')).toHaveCount(0);
     });
 });
