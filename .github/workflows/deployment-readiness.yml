@@ -19,7 +19,7 @@ jobs:
         working-directory: frontend
       - run: npm run build
         working-directory: frontend
-      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269ef065 # v3
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
       - run: terraform -chdir=deploy/terraform fmt -check -recursive
       - run: terraform -chdir=deploy/terraform init -backend=false
       - run: terraform -chdir=deploy/terraform validate
