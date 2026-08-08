@@ -7,6 +7,7 @@ It produces the ReasoningGraph—the canonical, inspectable trace of institution
 """
 
 from typing import Dict, Any, Tuple, Optional, List, Union
+from .lineage import stable_information_reference
 from .models import Fact, RuleGraph, ReasoningGraph, ExpressionNode, GraphNode, EvaluationContext
 from .operators import SUPPORTED_BRANCH_OPERATORS, SUPPORTED_LEAF_OPERATORS, UnsupportedOperatorError
 
@@ -38,6 +39,12 @@ def _evaluate_leaf(node: ExpressionNode, facts: Dict[str, Fact], graph: Reasonin
                     "record_state": context.record_state,
                     "source_system": context.source_system,
                     "source_as_of": context.source_as_of.isoformat() if context.source_as_of else None,
+                    "information_id": stable_information_reference(
+                        tenant_id=context.tenant_id,
+                        domain_id=context.domain_id,
+                        subject_id=context.subject_id,
+                        fact_id=fact.id,
+                    ),
                 },
                 computed_confidence=fact.final_confidence
             ))

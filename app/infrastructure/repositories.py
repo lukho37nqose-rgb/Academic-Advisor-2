@@ -62,6 +62,7 @@ from app.infrastructure.db import (
     DBWorkflowOutbox,
 )
 from app.core.compiler import build_expression_tree
+from app.core.lineage import stable_information_reference
 from app.services.access_controls import (
     decision_review_response_due_at,
     casework_routing,
@@ -207,6 +208,49 @@ def _domain_presentation(schema_definition: dict[str, Any]) -> dict[str, str]:
         "governed_person_label": _label("governed_person_label", "person"),
         "position_collection_label": _label("position_collection_label", "current positions"),
     }
+
+
+def _domain_fact_labels(schema_definition: dict[str, Any]) -> dict[str, str]:
+    properties = schema_definition.get("properties", {})
+    facts = properties.get("facts", {}) if isinstance(properties, dict) else {}
+    fact_properties = facts.get("properties", {}) if isinstance(facts, dict) else {}
+    if not isinstance(fact_properties, dict):
+        return {}
+    return {
+        f"facts.{key}": str(value.get("title", key.replace("_", " ").title()))
+        for key, value in fact_properties.items()
+        if isinstance(value, dict)
+    }
+
+
+def _safe_source_reference(proposal: DBEvidenceFactProposal, evidence: DBEvidence) -> Optional[str]:
+    locator = cast(Optional[str], proposal.source_locator)
+    if locator:
+        lowered = locator.lower()
+        if not lowered.startswith("approved mapping ") and not lowered.startswith("proposal:"):
+            return locator
+    version = cast(Optional[str], evidence.source_record_version)
+    return f"Record version {version}" if version else None
+
+
+def _student_information_status(status: str, *, conflicting: bool) -> tuple[str, str, str]:
+    if status == "ACCEPTED":
+        return (
+            "accepted",
+            "Accepted information",
+            "This information has passed the institution's evidence governance step and can be used in decision traces.",
+        )
+    if conflicting:
+        return (
+            "conflict",
+            "Needs review",
+            "Cacisa has more than one pending interpretation for this information. It should not be treated as settled until governance resolves it.",
+        )
+    return (
+        "provisional",
+        "Awaiting confirmation",
+        "Cacisa has received or interpreted this information, but it has not yet been accepted for decision-time use.",
+    )
 
 
 class MetadataGovernanceRepository:
@@ -4351,6 +4395,138 @@ class ReasoningRepository:
             }
         return list(newest_by_domain.values())
 
+    async def list_subject_information(
+        self,
+        *,
+        tenant_id: str,
+        subject_id: str,
+    ) -> list[dict[str, Any]]:
+        """Return a subject-safe view of governed information and decision use.
+
+        This is a read model over evidence-fact proposals and saved decision
+        snapshots. It intentionally omits source blobs, storage keys, hashes,
+        record fingerprints, staff notes, and raw database identifiers that are
+        not needed for a student's explanation journey.
+        """
+        proposal_result = await self.session.execute(
+            select(DBEvidenceFactProposal, DBEvidence, DBDomain)
+            .join(DBEvidence, DBEvidence.id == DBEvidenceFactProposal.evidence_id)
+            .join(DBDomain, DBDomain.id == DBEvidenceFactProposal.domain_id)
+            .where(
+                DBEvidenceFactProposal.tenant_id == tenant_id,
+                DBEvidenceFactProposal.subject_id == subject_id,
+                DBEvidence.tenant_id == tenant_id,
+                DBEvidence.subject_id == subject_id,
+                DBDomain.tenant_id == tenant_id,
+                DBEvidenceFactProposal.status.in_(["ACCEPTED", "PENDING"]),
+                ~exists().where(DBEvidenceDeletionEvent.evidence_id == DBEvidence.id),
+            )
+            .order_by(DBDomain.name, DBEvidenceFactProposal.target_path, DBEvidenceFactProposal.created_at)
+        )
+        proposal_rows = proposal_result.all()
+        if not proposal_rows:
+            return []
+
+        pending_values_by_target: dict[tuple[str, str], set[str]] = {}
+        for proposal, _evidence, _domain in proposal_rows:
+            if proposal.status != "PENDING":
+                continue
+            key = (cast(str, proposal.domain_id), cast(str, proposal.target_path))
+            pending_values_by_target.setdefault(key, set()).add(json.dumps(proposal.asserted_value, sort_keys=True, default=str))
+
+        graph_result = await self.session.execute(
+            select(DBReasoningGraph, DBDomain)
+            .join(DBDomain, DBDomain.id == DBReasoningGraph.domain_id)
+            .where(
+                DBReasoningGraph.tenant_id == tenant_id,
+                DBReasoningGraph.subject_id == subject_id,
+                DBDomain.tenant_id == tenant_id,
+                ~exists().where(DBReasoningGraphDeletionEvent.reasoning_graph_id == DBReasoningGraph.id),
+            )
+            .order_by(DBReasoningGraph.evaluated_at.desc(), DBReasoningGraph.id.desc())
+        )
+        graph_rows = graph_result.all()
+        graph_by_id = {cast(str, graph.id): (graph, domain) for graph, domain in graph_rows}
+        graph_ids = list(graph_by_id.keys())
+        facts_by_claim_id: dict[str, list[tuple[DBFact, DBReasoningGraph, DBDomain]]] = {}
+        if graph_ids:
+            facts_result = await self.session.execute(
+                select(DBFact)
+                .where(
+                    DBFact.tenant_id == tenant_id,
+                    DBFact.reasoning_graph_id.in_(graph_ids),
+                    ~exists().where(DBFactSupersessionEvent.old_fact_id == DBFact.id),
+                )
+                .order_by(DBFact.created_at, DBFact.id)
+            )
+            for fact in facts_result.scalars().all():
+                graph_domain = graph_by_id.get(cast(str, fact.reasoning_graph_id))
+                if graph_domain is None:
+                    continue
+                graph, domain = graph_domain
+                supporting_claims = cast(list[str], fact.supporting_claim_ids or [])
+                for claim_id in supporting_claims:
+                    facts_by_claim_id.setdefault(claim_id, []).append((fact, graph, domain))
+
+        items: list[dict[str, Any]] = []
+        for proposal, evidence, domain in proposal_rows:
+            schema = cast(dict[str, Any], domain.schema_definition)
+            labels = _domain_fact_labels(schema)
+            presentation = _domain_presentation(schema)
+            proposal_id = cast(str, proposal.id)
+            target_path = cast(str, proposal.target_path)
+            conflicting = len(pending_values_by_target.get((cast(str, proposal.domain_id), target_path), set())) > 1
+            status, status_label, status_explanation = _student_information_status(
+                cast(str, proposal.status),
+                conflicting=conflicting,
+            )
+            used_in: list[dict[str, Any]] = []
+            for fact, graph, graph_domain in facts_by_claim_id.get("claim_" + proposal_id, []):
+                graph_schema = cast(dict[str, Any], graph_domain.schema_definition)
+                surface = graph_schema.get("subject_position", graph_schema.get("student_position", {}))
+                surface = surface if isinstance(surface, dict) else {}
+                graph_data = cast(dict[str, Any], graph.graph_data)
+                evaluation_context = graph_data.get("evaluation_context", {})
+                evaluation_context = evaluation_context if isinstance(evaluation_context, dict) else {}
+                used_in.append({
+                    "trace_id": cast(str, graph.id),
+                    "domain_id": cast(str, graph.domain_id),
+                    "position_label": str(surface.get("label", graph_domain.name)),
+                    "decision": cast(str, graph.overall_decision),
+                    "release_version": str(evaluation_context.get("release_version", "Recorded release")),
+                    "evaluated_at": graph.evaluated_at.isoformat() if graph.evaluated_at else None,
+                    "fact_status": cast(str, fact.status),
+                })
+
+            items.append({
+                "information_id": stable_information_reference(
+                    tenant_id=tenant_id,
+                    domain_id=cast(str, proposal.domain_id),
+                    subject_id=subject_id,
+                    fact_id="fact_" + proposal_id,
+                ),
+                "domain_id": cast(str, proposal.domain_id),
+                "domain_name": cast(str, domain.name),
+                "label": labels.get(target_path, target_path.removeprefix("facts.").replace("_", " ").title()),
+                "value": proposal.asserted_value,
+                "status": status,
+                "status_label": status_label,
+                "status_explanation": status_explanation,
+                "proposed_at": proposal.created_at.isoformat() if proposal.created_at else None,
+                "reviewed_at": proposal.reviewed_at.isoformat() if proposal.reviewed_at else None,
+                "source": {
+                    "authority": cast(str, evidence.source_authority),
+                    "record_state": cast(str, evidence.record_state),
+                    "type": cast(str, evidence.source_type),
+                    "system": cast(Optional[str], evidence.source_system),
+                    "as_of": evidence.source_as_of.isoformat() if evidence.source_as_of else None,
+                    "captured_at": evidence.timestamp.isoformat() if evidence.timestamp else None,
+                    "reference": _safe_source_reference(proposal, evidence),
+                },
+                "used_in": used_in,
+                "governed_person_label": presentation["governed_person_label"],
+            })
+        return items
     async def get_evaluation_artifacts(
         self,
         graph_id: str,
