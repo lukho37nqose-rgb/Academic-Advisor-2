@@ -49,14 +49,14 @@ The protocol abandons linear evaluation in favor of explicit graph generation.
 ### 3.1 RuleGraph (Static Policy)
 * **Definition:** The static, compiled bytecode representing an institution's policy for a given domain and version.
 * **Mechanism:** Policies are authored in human-readable SDKs or visual builders, but compile down into a rigorous `ExpressionNode` AST (Abstract Syntax Tree) supporting logical grouping (`AND`, `OR`, `NOT`).
-* **Constraint:** A RuleGraph is tied to an immutable `Release`. The Release MUST be cryptographically signed to prove governance approval (Author vs. Approver separation of duties), and the signed payload binds policy metadata, rule logic, workflow intents, and a canonical cited-source manifest hash.
+* **Constraint:** A RuleGraph is tied to an immutable `Release`. The Release MUST be cryptographically signed to prove governance approval (Author vs. Approver separation of duties), and the signed payload binds policy metadata, rule logic, workflow intents, and a canonical cited-source manifest hash. A rule may retain both a human-readable citation and a structured policy-source pointer. That pointer identifies the authority behind the rule, not the student's evidence.
 
 ### 3.2 ReasoningGraph (Dynamic Trace)
 * **Definition:** The canonical artifact generated when a Subject is evaluated. 
 * **Mechanism:** The Reasoning Engine takes the `RuleGraph` and the accepted `Facts`, and executes the logic. It generates a graph containing:
   *   **Nodes:** `fact`, `rule_evaluation`, `conclusion`.
   *   **Edges:** `evaluates_to`, `depends_on`.
-* **Constraint:** The ReasoningGraph IS the evaluation. The final true/false decision is merely a flattened projection of the `conclusion` node. The graph MUST capture the exact context (Tenant, Subject, Release, Timestamp) under which it was generated.
+* **Constraint:** The ReasoningGraph IS the evaluation. The final true/false decision is merely a flattened projection of the `conclusion` node. The graph MUST capture the exact context (Tenant, Subject, Release, Timestamp) under which it was generated. Rule-evaluation nodes retain the policy-source pointer supplied by the compiled release, so a historical decision can keep pointing to the 2026 source even after a later release cites a 2027 source.
 
 * **Subject-view constraint:** A personal position view is a read-only
 projection of this trace. It may make the application of the shared release

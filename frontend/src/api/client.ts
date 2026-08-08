@@ -79,6 +79,22 @@ export interface GraphNode {
     computed_confidence: number;
 }
 
+export interface PolicySourceReference {
+    source_id?: string | null;
+    source_version?: string | null;
+    source_title?: string | null;
+    document_hash?: string | null;
+    page_start?: number | null;
+    page_end?: number | null;
+    section?: string | null;
+    rule_identifier?: string | null;
+    effective_from?: string | null;
+    effective_until?: string | null;
+    display_title?: string | null;
+    source_anchor?: string | null;
+    excerpt_reference?: string | null;
+}
+
 export interface GraphEdge {
     source_id: string;
     target_id: string;
@@ -328,6 +344,7 @@ export interface PublicPolicyRule {
     operator: string;
     expected_value: string | number | boolean | null;
     citation?: string | null;
+    policy_source?: Omit<PolicySourceReference, 'document_hash'> | null;
 }
 
 export type PublicPolicyNode = PublicPolicyGroup | PublicPolicyRule;

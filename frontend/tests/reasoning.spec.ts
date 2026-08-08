@@ -58,7 +58,7 @@ const mockGraphEligible = {
     rule_graph_id: "rg_1",
     nodes: {
         "gn_fact_1": { id: "gn_fact_1", type: "fact", label: "Fact: academic.gpa", data: { resolved_value: 3.5, source_authority: 'official_system', record_state: 'confirmed', source_system: 'PeopleSoft', source_as_of: '2026-07-24T00:00:00Z' }, computed_confidence: 1.0 },
-        "gn_eval_1": { id: "gn_eval_1", type: "rule_evaluation", label: "Check GPA", data: { passed: true, expected_condition: ">=", expected_value: 3.0, citation: "Academic Progress Policy 2026, section 3.1" }, computed_confidence: 1.0 },
+        "gn_eval_1": { id: "gn_eval_1", type: "rule_evaluation", label: "Check GPA", data: { passed: true, expected_condition: ">=", expected_value: 3.0, citation: "Academic Progress Policy 2026, section 3.1", policy_source: { source_id: 'policy_2026', source_version: '2026', source_title: 'Academic Progress Policy', page_start: 18, section: '3.1', display_title: 'Academic Progress Policy 2026', source_anchor: '#source-progress-2026-p18', excerpt_reference: 'Bounded source excerpt p. 18' } }, computed_confidence: 1.0 },
         "gn_conclusion": { id: "gn_conclusion", type: "conclusion", label: "Final Conclusion", data: { overall_passed: true }, computed_confidence: 1.0 }
     },
     edges: [{ source_id: 'gn_fact_1', target_id: 'gn_eval_1', relation: 'evaluates_to', weight: 1 }]
@@ -70,7 +70,7 @@ const mockGraphWithAcceptedInformation = {
     rule_graph_id: "rg_curriculum",
     nodes: {
         "gn_fact_credits": { id: "gn_fact_credits", type: "fact", label: "Fact: Completed credits", data: { resolved_value: 252, source_authority: 'official_system', record_state: 'confirmed', source_system: 'PeopleSoft', source_as_of: '2026-07-24T00:00:00Z', information_id: acceptedInformationId }, computed_confidence: 1.0 },
-        "gn_eval_credits": { id: "gn_eval_credits", type: "rule_evaluation", label: "Credits completed", data: { passed: true, expected_condition: ">=", expected_value: 240, citation: "Progression Policy 2026, section 4.2" }, computed_confidence: 1.0 },
+        "gn_eval_credits": { id: "gn_eval_credits", type: "rule_evaluation", label: "Credits completed", data: { passed: true, expected_condition: ">=", expected_value: 240, citation: "Progression Policy 2026, section 4.2", policy_source: { source_id: 'progression_policy_2026', source_version: '2026', source_title: 'Progression Policy', page_start: 44, section: '4.2', display_title: 'Progression Policy 2026', source_anchor: '#source-progression-2026-p44' } }, computed_confidence: 1.0 },
         "gn_conclusion": { id: "gn_conclusion", type: "conclusion", label: "Final Conclusion", data: { overall_passed: true }, computed_confidence: 1.0 }
     },
     edges: [{ source_id: 'gn_fact_credits', target_id: 'gn_eval_credits', relation: 'evaluates_to', weight: 1 }],
@@ -352,6 +352,8 @@ test.describe('Workspace access boundaries', () => {
 
         await page.getByRole('link', { name: 'Open current position' }).click();
         await expect(page.getByRole('heading', { name: 'You meet the requirements to continue.' })).toBeVisible();
+        await expect(page.getByText('Source: Progression Policy 2026 · p. 44 · 4.2')).toBeVisible();
+        await expect(page.getByRole('link', { name: 'See source' }).first()).toHaveAttribute('href', '#source-progression-2026-p44');
         await expect(page.getByRole('link', { name: 'See where this information came from' }).first()).toHaveAttribute('href', `?experience=subject&information=${acceptedInformationId}#information-item-${acceptedInformationId}`);
         await page.getByRole('link', { name: 'See where this information came from' }).first().click();
         await expect(page.getByRole('heading', { name: 'Information Cacisa uses about you' })).toBeVisible();
@@ -373,7 +375,10 @@ test.describe('Workspace access boundaries', () => {
         await expect(page.getByLabel('Why Cacisa reached this position').getByText('3.5')).toBeVisible();
         await expect(page.getByLabel('Why Cacisa reached this position').getByText('Policy requirement')).toBeVisible();
         await expect(page.getByLabel('Why Cacisa reached this position').getByText('>= 3')).toBeVisible();
-        await expect(page.getByLabel('Why Cacisa reached this position').getByText('Policy source: Academic Progress Policy 2026, section 3.1')).toBeVisible();
+        await expect(page.getByLabel('Why Cacisa reached this position').getByText('Source: Academic Progress Policy 2026 · p. 18 · 3.1')).toBeVisible();
+        await expect(page.getByRole('link', { name: 'See source' }).first()).toHaveAttribute('href', '#source-progress-2026-p18');
+        await page.getByRole('link', { name: 'See source' }).first().click();
+        await expect(page.locator('#source-progress-2026-p18')).toContainText('Academic Progress Policy 2026');
         await expect(page.getByRole('heading', { name: 'Information Cacisa used' })).toBeVisible();
         await expect(page.getByText('Official institutional record')).toBeVisible();
         await expect(page.getByRole('heading', { name: 'Published policy sources' })).toBeVisible();
