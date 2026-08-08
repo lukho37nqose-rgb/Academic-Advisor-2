@@ -89,7 +89,7 @@ test.describe('Workspace access boundaries', () => {
         await expect(page.getByRole('heading', { name: 'Your work' })).toBeVisible();
         await expect(page.getByRole('button', { name: 'Governance Desk' })).toBeVisible();
         await expect(page.getByRole('button', { name: 'System Records' })).toBeVisible();
-        await expect(page.getByRole('button', { name: 'Shadow Calibration' })).toBeVisible();
+        await expect(page.getByRole('button', { name: 'Outcome Calibration' })).toBeVisible();
         await expect(page.getByRole('button', { name: 'Institutional Timeline' })).toBeVisible();
         await expect(page.getByRole('button', { name: 'Evidence Facts' })).toBeVisible();
         await expect(page.getByRole('button', { name: 'Investigations' })).toHaveCount(0);
@@ -110,7 +110,7 @@ test.describe('Workspace access boundaries', () => {
         await expect(page.getByRole('button', { name: 'Governance Desk' })).toBeVisible();
         await expect(page.getByRole('button', { name: 'System Records' })).toHaveCount(0);
         await expect(page.getByRole('button', { name: 'Policy Review' })).toHaveCount(0);
-        await expect(page.getByRole('button', { name: 'Shadow Calibration' })).toHaveCount(0);
+        await expect(page.getByRole('button', { name: 'Outcome Calibration' })).toHaveCount(0);
     });
 
     async function mockCalibrationWorkspace(page: Page) {
@@ -128,7 +128,7 @@ test.describe('Workspace access boundaries', () => {
         });
     }
 
-    test('lets a policy author prepare a shadow-calibration suite', async ({ page }) => {
+    test('lets a policy author prepare an outcome-calibration suite', async ({ page }) => {
         await mockCalibrationWorkspace(page);
         await page.route('**/api/v1/admin/domains/dom_calibration/record-import-fields', async route => {
             await route.fulfill({ json: { items: [] } });
@@ -136,7 +136,7 @@ test.describe('Workspace access boundaries', () => {
         await openApplication(page, {
             experience: 'staff', role: 'policy_editor', role_label: 'Policy author', allowed_views: ['shadow_calibration'],
         });
-        await page.getByRole('button', { name: 'Shadow Calibration' }).click();
+        await page.getByRole('button', { name: 'Outcome Calibration' }).click();
         await expect(page.getByRole('button', { name: 'New suite' })).toBeVisible();
     });
 
@@ -435,7 +435,7 @@ test.describe('Governance Desk', () => {
 });
 
 test.describe('Institutional Input And Public Access', () => {
-    test('lets staff preview a CSV export using only declared decision facts', async ({ page }) => {
+    test('lets staff preview a source record file using only declared decision facts', async ({ page }) => {
         await page.route('**/api/v1/admin/domains', async route => {
             await route.fulfill({ json: { items: [{ domain_id: 'dom_import', domain_name: 'Student Support Eligibility' }] } });
         });
@@ -479,17 +479,17 @@ test.describe('Institutional Input And Public Access', () => {
 
         await openApplication(page);
         await page.getByRole('button', { name: 'System Records' }).click();
-        await page.getByLabel('CSV export').setInputFiles({
+        await page.getByLabel('Source record file').setInputFiles({
             name: 'records.csv', mimeType: 'text/csv', buffer: Buffer.from('record_id,version,income\nsubject_1,1,120000\n'),
         });
         await page.getByLabel('Mapping name').fill('income-v1');
         await page.getByLabel('Approved institutional data source').selectOption('source_1');
         await page.getByLabel('Subject identifier column').fill('record_id');
         await page.getByLabel('Source record version column').fill('version');
-        await page.getByLabel('Export column name').fill('income');
+        await page.getByLabel('Source field or column name').fill('income');
         await page.getByRole('button', { name: 'Submit mapping for review' }).click();
         await expect(page.getByText('Mapping income-v1 was submitted for independent review.')).toBeVisible();
-        await page.getByRole('button', { name: 'Check export' }).click();
+        await page.getByRole('button', { name: 'Check source records' }).click();
         await expect(page.getByRole('heading', { name: 'Export check' })).toBeVisible();
         await expect(page.getByText('Ignored columns: unneeded_note.')).toBeVisible();
     });
