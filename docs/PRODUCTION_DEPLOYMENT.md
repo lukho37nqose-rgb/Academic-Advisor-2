@@ -45,21 +45,27 @@ is switched.
    it is not a deployable dependency manifest. Container and local
    infrastructure image references are pinned by digest and updated through
    reviewed automation.
-3. Run `python -m alembic upgrade head` as a separate, reviewed deployment job
+3. Run `python tools/production_preflight.py` against the intended production
+   environment variables. This is a static configuration check; it does not
+   prove external service reachability.
+4. Run `python -m alembic upgrade head` as a separate, reviewed deployment job
    using a migration principal. The serving container must not migrate its own
    schema.
-4. Deploy the non-root application image. Check `/health/live` for process
+5. Deploy the non-root application image. Check `/health/live` for process
    liveness and `/health/ready` for database readiness. Both return an
    `X-Request-ID` that can join a support report to safe request telemetry.
-5. Deploy the durable handbook worker separately with an explicit
+6. Deploy the durable handbook worker separately with an explicit
    `IRE_WORKER_TENANT_IDS` allowlist. The worker uses the same restricted serving
    database identity and must not receive a cross-tenant bypass credential.
-6. Run post-deploy checks with institutional test identities: OIDC claim mapping,
+7. Run post-deploy checks with institutional test identities: OIDC claim mapping,
    role revocation, tenant/domain isolation, author/approver separation,
    release signature verification, source upload, independently reviewed fact
    acceptance, evidence-hash failure, verified replay, assistance route, a
    subject-owned decision-review case, and an idempotent retry.
-7. Enable pre-production validation traffic only after the policy, privacy,
+   The repository-owned starting point is
+   `python tools/institutional_smoke_check.py`; see
+   `docs/INSTITUTIONAL_DEPLOYMENT_REHEARSAL.md`.
+8. Enable pre-production validation traffic only after the policy, privacy,
    accessibility, and operational owners have accepted the pilot entry gates.
 
 ## Configuration and secret operations
