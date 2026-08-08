@@ -31,9 +31,10 @@ function apiProblemMessage(error: unknown): string {
 // Helper to get the OIDC token from session storage
 const getOidcToken = () => {
   const providerSurface = import.meta.env.VITE_APP_SURFACE === 'provider';
-  const authority = providerSurface ? import.meta.env.VITE_PROVIDER_OIDC_AUTHORITY : import.meta.env.VITE_OIDC_AUTHORITY;
-  const clientId = providerSurface ? import.meta.env.VITE_PROVIDER_OIDC_CLIENT_ID : import.meta.env.VITE_OIDC_CLIENT_ID;
-  const oidcStorageKey = `oidc.user:${authority || "https://your-tenant.auth0.com"}:${clientId || "your-client-id"}`;
+  const authority = (providerSurface ? import.meta.env.VITE_PROVIDER_OIDC_AUTHORITY : import.meta.env.VITE_OIDC_AUTHORITY)?.trim();
+  const clientId = (providerSurface ? import.meta.env.VITE_PROVIDER_OIDC_CLIENT_ID : import.meta.env.VITE_OIDC_CLIENT_ID)?.trim();
+  if (!authority || !clientId) return null;
+  const oidcStorageKey = `oidc.user:${authority}:${clientId}`;
   const oidcStorage = sessionStorage.getItem(oidcStorageKey);
   if (!oidcStorage) return null;
   try {
