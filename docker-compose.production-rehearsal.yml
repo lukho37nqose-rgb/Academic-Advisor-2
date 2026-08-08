@@ -1,0 +1,20 @@
+# Disposable PostgreSQL target for the production-stack rehearsal only.
+services:
+  postgres-production-rehearsal:
+    image: postgres:15-alpine@sha256:3d0f7584ed7d04e27fa050d6683a74746608faf21f202be78460d679cc56461f
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: ire_production_rehearsal
+    ports:
+      - "5434:5432"
+    volumes:
+      - postgres_production_rehearsal_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ire_production_rehearsal"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+volumes:
+  postgres_production_rehearsal_data:

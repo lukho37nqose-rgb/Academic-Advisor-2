@@ -25,7 +25,12 @@ from app.services.auth import (
     require_role,
     require_provider_role,
 )
-from app.infrastructure.database import get_db_session, init_db, validate_production_database_safety
+from app.infrastructure.database import (
+    get_db_session,
+    init_db,
+    validate_database_readiness,
+    validate_production_database_safety,
+)
 from app.infrastructure.repositories import (
     BackgroundJobConflictError,
     BackgroundJobRepository,
@@ -273,9 +278,9 @@ async def health_live() -> dict[str, str]:
 
 @app.get("/health/ready", include_in_schema=False)
 async def health_ready(db: AsyncSession = Depends(get_db_session)) -> dict[str, str]:
-    """Readiness probe confirms that the configured database can accept a query."""
+    """Readiness probe confirms that required production dependencies are usable."""
     try:
-        await db.execute(text("SELECT 1"))
+        await validate_database_readiness(db)
     except Exception as exc:
         raise HTTPException(status_code=503, detail="Service dependencies are not ready.") from exc
     return {"status": "ready", "service": "institutional-reasoning-engine"}

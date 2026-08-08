@@ -3,9 +3,13 @@ Database Configuration and Session Management.
 """
 import os
 import logging
+from pathlib import Path
 from collections.abc import AsyncGenerator
 
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import event, text
+from sqlalchemy.exc import DBAPIError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.orm import Session
 from app.infrastructure.db import Base
@@ -151,6 +155,30 @@ async def validate_production_database_safety(*, database_engine: AsyncEngine | 
                 "Production database is missing immutable decision-artifact triggers for: "
                 + ", ".join(missing_triggers)
             )
+
+
+def expected_schema_heads() -> set[str]:
+    """Return the repository Alembic heads expected by a production database."""
+    config = Config(str(Path(__file__).resolve().parents[2] / "alembic.ini"))
+    script = ScriptDirectory.from_config(config)
+    return set(script.get_heads())
+
+
+async def validate_database_readiness(session: AsyncSession) -> None:
+    """Confirm the database is reachable and, in production, migrated to head."""
+    await session.execute(text("SELECT 1"))
+    if os.environ.get("IRE_ENV", "development").lower() != "production":
+        return
+    expected_heads = expected_schema_heads()
+    if len(expected_heads) != 1:
+        raise RuntimeError("Production readiness requires exactly one Alembic head.")
+    try:
+        result = await session.execute(text("SELECT version_num FROM alembic_version"))
+    except (DBAPIError, SQLAlchemyError) as exc:
+        raise RuntimeError("Production database schema is not at the reviewed Alembic head.") from exc
+    applied_versions = {str(row.version_num) for row in result}
+    if applied_versions != expected_heads:
+        raise RuntimeError("Production database schema is not at the reviewed Alembic head.")
 
 async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
     """Dependency provider for FastAPI."""

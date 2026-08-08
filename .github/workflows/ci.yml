@@ -161,3 +161,43 @@ jobs:
 
     - name: Rehearse PostgreSQL tenant isolation
       run: python tools/run_postgres_rls_rehearsal.py --no-compose
+
+  production-stack-rehearsal:
+    if: startsWith(github.ref, 'refs/heads/production/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:15-alpine@sha256:3d0f7584ed7d04e27fa050d6683a74746608faf21f202be78460d679cc56461f
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ire_production_rehearsal
+        ports:
+          - 5434:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d ire_production_rehearsal"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      IRE_PRODUCTION_REHEARSAL_ALLOW_DESTRUCTIVE: confirmed
+      IRE_PRODUCTION_REHEARSAL_BOOTSTRAP_URL: postgresql+asyncpg://postgres:postgres@127.0.0.1:5434/ire_production_rehearsal
+      IRE_PRODUCTION_REHEARSAL_MIGRATOR_URL: postgresql+asyncpg://ire_prod_migrator_rehearsal:migrator-rehearsal-password@127.0.0.1:5434/ire_production_rehearsal
+      IRE_PRODUCTION_REHEARSAL_APP_URL: postgresql+asyncpg://ire_prod_app_rehearsal:app-rehearsal-password@127.0.0.1:5434/ire_production_rehearsal
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+    - name: Set up Python
+      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      with:
+        python-version: "3.12"
+        cache: "pip"
+
+    - name: Install dependencies
+      run: |
+        pip install --require-hashes -r requirements.txt
+        pip check
+
+    - name: Rehearse production-mode container startup
+      run: python tools/run_production_stack_rehearsal.py --no-postgres-compose --image-tag institutional-reasoning-engine-production-rehearsal:${{ github.sha }}
