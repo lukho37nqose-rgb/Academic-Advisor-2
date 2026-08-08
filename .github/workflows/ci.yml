@@ -2,7 +2,7 @@ name: Institutional Reasoning Engine CI
 
 on:
   push:
-    branches: [ "main", "feat/*", "feature/*", "verification/*" ]
+    branches: [ "main", "feat/*", "feature/*", "verification/*", "production/*" ]
   pull_request:
     branches: [ "main" ]
 

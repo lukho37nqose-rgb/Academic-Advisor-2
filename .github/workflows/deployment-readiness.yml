@@ -2,7 +2,7 @@ name: Deployment Readiness
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, production/*]
 permissions: { contents: read }
 jobs:
   verify:
