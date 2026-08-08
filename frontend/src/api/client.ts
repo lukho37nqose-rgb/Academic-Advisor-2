@@ -1,7 +1,7 @@
 import axios from 'axios';
 
-// Defaults to localhost for dev, can be configured via Vite env vars
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/v1';
+const configuredApiBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim();
+const API_BASE_URL = configuredApiBaseUrl || (import.meta.env.DEV ? 'http://localhost:8000/api/v1' : '/api/v1');
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
@@ -31,9 +31,10 @@ function apiProblemMessage(error: unknown): string {
 // Helper to get the OIDC token from session storage
 const getOidcToken = () => {
   const providerSurface = import.meta.env.VITE_APP_SURFACE === 'provider';
-  const authority = providerSurface ? import.meta.env.VITE_PROVIDER_OIDC_AUTHORITY : import.meta.env.VITE_OIDC_AUTHORITY;
-  const clientId = providerSurface ? import.meta.env.VITE_PROVIDER_OIDC_CLIENT_ID : import.meta.env.VITE_OIDC_CLIENT_ID;
-  const oidcStorageKey = `oidc.user:${authority || "https://your-tenant.auth0.com"}:${clientId || "your-client-id"}`;
+  const authority = (providerSurface ? import.meta.env.VITE_PROVIDER_OIDC_AUTHORITY : import.meta.env.VITE_OIDC_AUTHORITY)?.trim();
+  const clientId = (providerSurface ? import.meta.env.VITE_PROVIDER_OIDC_CLIENT_ID : import.meta.env.VITE_OIDC_CLIENT_ID)?.trim();
+  if (!authority || !clientId) return null;
+  const oidcStorageKey = `oidc.user:${authority}:${clientId}`;
   const oidcStorage = sessionStorage.getItem(oidcStorageKey);
   if (!oidcStorage) return null;
   try {
