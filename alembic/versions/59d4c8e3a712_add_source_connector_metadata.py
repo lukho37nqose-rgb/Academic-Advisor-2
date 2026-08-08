@@ -15,30 +15,30 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column("institutional_data_sources", sa.Column("connector_kind", sa.String(), nullable=False, server_default="NONE"))
-    op.add_column("institutional_data_sources", sa.Column("credential_reference", sa.String(), nullable=True))
-    op.add_column("institutional_data_sources", sa.Column("endpoint_reference", sa.String(), nullable=True))
-    op.add_column("institutional_data_sources", sa.Column("allowed_object", sa.String(), nullable=True))
-    op.add_column("institutional_data_sources", sa.Column("connector_status", sa.String(), nullable=False, server_default="NOT_CONFIGURED"))
-    op.add_column("institutional_data_sources", sa.Column("connector_last_checked_at", sa.DateTime(timezone=True), nullable=True))
-    op.create_check_constraint(
-        "ck_institutional_data_source_connector_kind",
-        "institutional_data_sources",
-        "connector_kind IN ('NONE', 'REST_API', 'SFTP_PULL', 'DATABASE_VIEW', 'VENDOR_API')",
-    )
-    op.create_check_constraint(
-        "ck_institutional_data_source_connector_status",
-        "institutional_data_sources",
-        "connector_status IN ('NOT_CONFIGURED', 'CONFIGURED', 'TEST_FAILED', 'APPROVED', 'PAUSED', 'RETIRED')",
-    )
+    with op.batch_alter_table("institutional_data_sources") as batch_op:
+        batch_op.add_column(sa.Column("connector_kind", sa.String(), nullable=False, server_default="NONE"))
+        batch_op.add_column(sa.Column("credential_reference", sa.String(), nullable=True))
+        batch_op.add_column(sa.Column("endpoint_reference", sa.String(), nullable=True))
+        batch_op.add_column(sa.Column("allowed_object", sa.String(), nullable=True))
+        batch_op.add_column(sa.Column("connector_status", sa.String(), nullable=False, server_default="NOT_CONFIGURED"))
+        batch_op.add_column(sa.Column("connector_last_checked_at", sa.DateTime(timezone=True), nullable=True))
+        batch_op.create_check_constraint(
+            "ck_institutional_data_source_connector_kind",
+            "connector_kind IN ('NONE', 'REST_API', 'SFTP_PULL', 'DATABASE_VIEW', 'VENDOR_API')",
+        )
+        batch_op.create_check_constraint(
+            "ck_institutional_data_source_connector_status",
+            "connector_status IN ('NOT_CONFIGURED', 'CONFIGURED', 'TEST_FAILED', 'APPROVED', 'PAUSED', 'RETIRED')",
+        )
 
 
 def downgrade() -> None:
-    op.drop_constraint("ck_institutional_data_source_connector_status", "institutional_data_sources", type_="check")
-    op.drop_constraint("ck_institutional_data_source_connector_kind", "institutional_data_sources", type_="check")
-    op.drop_column("institutional_data_sources", "connector_last_checked_at")
-    op.drop_column("institutional_data_sources", "connector_status")
-    op.drop_column("institutional_data_sources", "allowed_object")
-    op.drop_column("institutional_data_sources", "endpoint_reference")
-    op.drop_column("institutional_data_sources", "credential_reference")
-    op.drop_column("institutional_data_sources", "connector_kind")
+    with op.batch_alter_table("institutional_data_sources") as batch_op:
+        batch_op.drop_constraint("ck_institutional_data_source_connector_status", type_="check")
+        batch_op.drop_constraint("ck_institutional_data_source_connector_kind", type_="check")
+        batch_op.drop_column("connector_last_checked_at")
+        batch_op.drop_column("connector_status")
+        batch_op.drop_column("allowed_object")
+        batch_op.drop_column("endpoint_reference")
+        batch_op.drop_column("credential_reference")
+        batch_op.drop_column("connector_kind")
