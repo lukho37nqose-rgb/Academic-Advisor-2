@@ -357,6 +357,59 @@ async def _seed_two_tenants(app_url: str) -> None:
                     """),
                     {"id": evidence_id, "tenant_id": tenant_id, "domain_id": domain_id, "hash": evidence_id},
                 )
+                await connection.execute(
+                    text("""
+                        INSERT INTO reasoning_graphs
+                        (id, tenant_id, domain_id, subject_id, rule_graph_id, release_id, evidence_id,
+                         graph_data, overall_decision, overall_confidence)
+                        VALUES
+                        (:id, :tenant_id, :domain_id, 'subject_1', :graph_id, :release_id, :evidence_id,
+                         CAST(:graph_data AS jsonb), 'ELIGIBLE', 1.0)
+                    """),
+                    {
+                        "id": f"reasoning_{tenant_id}",
+                        "tenant_id": tenant_id,
+                        "domain_id": domain_id,
+                        "graph_id": graph_id,
+                        "release_id": release_id,
+                        "evidence_id": evidence_id,
+                        "graph_data": json.dumps({"nodes": [], "edges": []}),
+                    },
+                )
+                await connection.execute(
+                    text("""
+                        INSERT INTO claims
+                        (id, tenant_id, domain_id, evidence_id, reasoning_graph_id, target_path,
+                         asserted_value, extraction_confidence, source_trust_level, status)
+                        VALUES
+                        (:id, :tenant_id, :domain_id, :evidence_id, :reasoning_graph_id,
+                         'facts.completed_credits', CAST('120' AS jsonb), 1.0, 1.0, 'ACCEPTED')
+                    """),
+                    {
+                        "id": f"claim_{tenant_id}",
+                        "tenant_id": tenant_id,
+                        "domain_id": domain_id,
+                        "evidence_id": evidence_id,
+                        "reasoning_graph_id": f"reasoning_{tenant_id}",
+                    },
+                )
+                await connection.execute(
+                    text("""
+                        INSERT INTO facts
+                        (id, tenant_id, domain_id, reasoning_graph_id, target_path, resolved_value,
+                         final_confidence, status, supporting_claim_ids, rejected_claim_ids)
+                        VALUES
+                        (:id, :tenant_id, :domain_id, :reasoning_graph_id, 'facts.completed_credits',
+                         CAST('120' AS jsonb), 1.0, 'ACCEPTED', CAST(:supporting_claim_ids AS jsonb), CAST('[]' AS jsonb))
+                    """),
+                    {
+                        "id": f"fact_{tenant_id}",
+                        "tenant_id": tenant_id,
+                        "domain_id": domain_id,
+                        "reasoning_graph_id": f"reasoning_{tenant_id}",
+                        "supporting_claim_ids": json.dumps([f"claim_{tenant_id}"]),
+                    },
+                )
     finally:
         await app_engine.dispose()
 
@@ -382,16 +435,24 @@ def test_serving_role_and_every_protected_table_have_enforced_rls(
                 assert not any(bool(role[field]) for field in role)
 
                 result = await connection.execute(text("""
-                    SELECT relation.relname, relation.relrowsecurity, relation.relforcerowsecurity
+                    SELECT relation.relname, relation.relrowsecurity, relation.relforcerowsecurity,
+                           owner.rolname AS owner_name
                     FROM pg_class AS relation
                     JOIN pg_namespace AS schema ON schema.oid = relation.relnamespace
+                    JOIN pg_roles AS owner ON owner.oid = relation.relowner
                     WHERE relation.relkind = 'r'
                     AND schema.nspname = 'public'
                     AND relation.relname = ANY(CAST(:table_names AS text[]))
                 """), {"table_names": list(_RLS_TABLES)})
                 protected_tables = {row.relname: row for row in result}
                 assert set(protected_tables) == set(_RLS_TABLES)
-                assert all(row.relrowsecurity and row.relforcerowsecurity for row in protected_tables.values())
+                unsafe_tables = [
+                    row.relname
+                    for row in protected_tables.values()
+                    if not row.relrowsecurity or not row.relforcerowsecurity
+                ]
+                assert unsafe_tables == []
+                assert all(row.owner_name != postgres_rls_environment.app_role for row in protected_tables.values())
         finally:
             await bootstrap_engine.dispose()
 
@@ -437,7 +498,7 @@ def test_serving_session_cannot_read_update_or_insert_across_tenants(
 
             with tenant_scope("tenant_uct"):
                 async with session_factory() as session:
-                    with pytest.raises(DBAPIError):
+                    with pytest.raises(DBAPIError, match="System-record import mappings are immutable"):
                         await session.execute(text("""
                             UPDATE system_record_import_mappings
                             SET mapping_name = 'rewritten'
@@ -445,7 +506,7 @@ def test_serving_session_cannot_read_update_or_insert_across_tenants(
                         """))
 
                 async with session_factory() as session:
-                    with pytest.raises(DBAPIError):
+                    with pytest.raises(DBAPIError, match="System-record import mapping events are append-only"):
                         await session.execute(text("""
                             UPDATE system_record_import_mapping_events
                             SET actor_id = 'rewritten'
@@ -475,6 +536,72 @@ def test_serving_session_cannot_read_update_or_insert_across_tenants(
                             INSERT INTO policy_drafts (id, tenant_id, domain_id, policy_name, author_id, payload)
                             VALUES ('draft_illegal', 'tenant_other', 'dom_private', 'Illegal', 'author_1', CAST('{}' AS jsonb))
                         """))
+        finally:
+            await app_engine.dispose()
+
+    asyncio.run(verify())
+
+
+def test_transaction_local_tenant_context_does_not_leak_between_sessions(
+    seeded_postgres_rls_environment: RehearsalConfiguration,
+) -> None:
+    async def verify() -> None:
+        app_engine = create_async_engine(seeded_postgres_rls_environment.app_url)
+        session_factory = async_sessionmaker(bind=app_engine, expire_on_commit=False)
+        try:
+            with tenant_scope("tenant_uct"):
+                async with session_factory() as session:
+                    visible_drafts = (await session.execute(
+                        text("SELECT id FROM policy_drafts ORDER BY id")
+                    )).scalars().all()
+                    assert visible_drafts == ["draft_uct"]
+
+            async with session_factory() as session:
+                unscoped_drafts = (await session.execute(
+                    text("SELECT id FROM policy_drafts ORDER BY id")
+                )).scalars().all()
+                assert unscoped_drafts == []
+
+            with tenant_scope("tenant_other"):
+                async with session_factory() as session:
+                    visible_drafts = (await session.execute(
+                        text("SELECT id FROM policy_drafts ORDER BY id")
+                    )).scalars().all()
+                    assert visible_drafts == ["draft_other"]
+        finally:
+            await app_engine.dispose()
+
+    asyncio.run(verify())
+
+
+def test_runtime_role_cannot_mutate_append_only_decision_artifacts(
+    seeded_postgres_rls_environment: RehearsalConfiguration,
+) -> None:
+    attempts = (
+        ("evidence", "evidence_uct", "UPDATE evidence SET source_type = 'rewritten' WHERE id = 'evidence_uct'"),
+        ("evidence", "evidence_uct", "DELETE FROM evidence WHERE id = 'evidence_uct'"),
+        ("claims", "claim_tenant_uct", "UPDATE claims SET status = 'REWRITTEN' WHERE id = 'claim_tenant_uct'"),
+        ("claims", "claim_tenant_uct", "DELETE FROM claims WHERE id = 'claim_tenant_uct'"),
+        ("facts", "fact_tenant_uct", "UPDATE facts SET status = 'REWRITTEN' WHERE id = 'fact_tenant_uct'"),
+        ("facts", "fact_tenant_uct", "DELETE FROM facts WHERE id = 'fact_tenant_uct'"),
+        ("releases", "rel_public", "UPDATE releases SET version = 'rewritten' WHERE id = 'rel_public'"),
+        ("releases", "rel_public", "DELETE FROM releases WHERE id = 'rel_public'"),
+        ("rule_graphs", "graph_public", "UPDATE rule_graphs SET compiled_bytecode = CAST('{}' AS jsonb) WHERE id = 'graph_public'"),
+        ("rule_graphs", "graph_public", "DELETE FROM rule_graphs WHERE id = 'graph_public'"),
+        ("reasoning_graphs", "reasoning_tenant_uct", "UPDATE reasoning_graphs SET overall_decision = 'REWRITTEN' WHERE id = 'reasoning_tenant_uct'"),
+        ("reasoning_graphs", "reasoning_tenant_uct", "DELETE FROM reasoning_graphs WHERE id = 'reasoning_tenant_uct'"),
+    )
+
+    async def verify() -> None:
+        app_engine = create_async_engine(seeded_postgres_rls_environment.app_url)
+        session_factory = async_sessionmaker(bind=app_engine, expire_on_commit=False)
+        try:
+            with tenant_scope("tenant_uct"):
+                for _table_name, _row_id, statement in attempts:
+                    async with session_factory() as session:
+                        with pytest.raises(DBAPIError, match="Decision-bearing records are append-only"):
+                            await session.execute(text(statement))
+                            await session.commit()
         finally:
             await app_engine.dispose()
 

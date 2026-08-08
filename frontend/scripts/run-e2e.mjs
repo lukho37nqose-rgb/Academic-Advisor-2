@@ -49,6 +49,11 @@ let vite;
 if (!isListingTests) {
   vite = spawn(process.execPath, [viteCli, '--host', host, '--port', port, '--strictPort'], {
     stdio: 'inherit',
+    env: {
+      ...process.env,
+      VITE_OIDC_AUTHORITY: process.env.VITE_OIDC_AUTHORITY || 'https://your-tenant.auth0.com',
+      VITE_OIDC_CLIENT_ID: process.env.VITE_OIDC_CLIENT_ID || 'your-client-id',
+    },
   });
   vite.once('error', () => process.exit(1));
   try {

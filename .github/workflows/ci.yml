@@ -2,7 +2,7 @@ name: Institutional Reasoning Engine CI
 
 on:
   push:
-    branches: [ "main", "feat/*" ]
+    branches: [ "main", "feat/*", "verification/*" ]
   pull_request:
     branches: [ "main" ]
 
@@ -160,4 +160,4 @@ jobs:
         pip check
 
     - name: Rehearse PostgreSQL tenant isolation
-      run: python -m pytest tests/integration/test_postgres_rls.py -q
+      run: python tools/run_postgres_rls_rehearsal.py --no-compose
