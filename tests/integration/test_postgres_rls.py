@@ -446,7 +446,12 @@ def test_serving_role_and_every_protected_table_have_enforced_rls(
                 """), {"table_names": list(_RLS_TABLES)})
                 protected_tables = {row.relname: row for row in result}
                 assert set(protected_tables) == set(_RLS_TABLES)
-                assert all(row.relrowsecurity and row.relforcerowsecurity for row in protected_tables.values())
+                unsafe_tables = [
+                    row.relname
+                    for row in protected_tables.values()
+                    if not row.relrowsecurity or not row.relforcerowsecurity
+                ]
+                assert unsafe_tables == []
                 assert all(row.owner_name != postgres_rls_environment.app_role for row in protected_tables.values())
         finally:
             await bootstrap_engine.dispose()
@@ -493,7 +498,7 @@ def test_serving_session_cannot_read_update_or_insert_across_tenants(
 
             with tenant_scope("tenant_uct"):
                 async with session_factory() as session:
-                    with pytest.raises(DBAPIError):
+                    with pytest.raises(DBAPIError, match="System-record import mappings are immutable"):
                         await session.execute(text("""
                             UPDATE system_record_import_mappings
                             SET mapping_name = 'rewritten'
@@ -501,7 +506,7 @@ def test_serving_session_cannot_read_update_or_insert_across_tenants(
                         """))
 
                 async with session_factory() as session:
-                    with pytest.raises(DBAPIError):
+                    with pytest.raises(DBAPIError, match="System-record import mapping events are append-only"):
                         await session.execute(text("""
                             UPDATE system_record_import_mapping_events
                             SET actor_id = 'rewritten'
