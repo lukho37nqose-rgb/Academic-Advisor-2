@@ -56,6 +56,13 @@ class Fact(BaseModel):
     superseded_by_fact_id: Optional[str] = None
     superseded_at: Optional[datetime.datetime] = None
     superseding_reason: Optional[str] = None
+    source_authority: Optional[Literal["official_system", "institutional_working_record", "subject_submitted"]] = None
+    record_state: Optional[Literal["confirmed", "provisional"]] = None
+    source_system: Optional[str] = None
+    source_record_version: Optional[str] = None
+    source_as_of: Optional[datetime.datetime] = None
+    recorded_at: Optional[datetime.datetime] = None
+    accepted_at: Optional[datetime.datetime] = None
 
 
 # --- Logical Architecture Models ---
@@ -135,6 +142,9 @@ class EvaluationContext(BaseModel):
     source_system: Optional[str] = None
     source_record_version: Optional[str] = None
     source_as_of: Optional[datetime.datetime] = None
+    institutional_position_effective_at: Optional[datetime.datetime] = None
+    institutional_position_known_at: Optional[datetime.datetime] = None
+    position_context_kind: Literal["single_evidence", "governed_institutional_position"] = "single_evidence"
     timestamp: str = Field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).isoformat())
     feature_flags: Dict[str, bool] = Field(default_factory=dict)
 

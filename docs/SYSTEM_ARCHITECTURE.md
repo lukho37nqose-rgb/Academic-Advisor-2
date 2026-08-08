@@ -41,6 +41,20 @@ To preserve the integrity of appeals and audits, the protocol strictly models th
 * **Constraint:** Facts retain their supporting claim, evidence hash, tenant,
   domain, and reasoning trace lineage. They are append-only in PostgreSQL.
 
+### 2.4 Governed Institutional Position
+* **Definition:** A temporal selection of accepted, governed information for a
+  subject, tenant, and domain at an effective point in time.
+* **Mechanism:** A position is composed from accepted evidence-fact proposals
+  whose preserved source records are confirmed and effective on or before the
+  requested time. A separate known-at time can constrain selection to
+  information that had already been recorded and reviewed at the decision time.
+* **Constraint:** The position is not a new source of truth and does not replace
+  Evidence, proposals, or decision-bound Fact snapshots. Provisional, rejected,
+  unaccepted, deleted, or conflicting inputs are not silently elevated into the
+  governed position. Historical decisions remain bound to the Claim/Fact
+  snapshots they persisted, even when later governed information changes what
+  Cacisa now understands about an earlier effective period.
+
 ---
 
 ## 3. The Execution Protocol (The Three Graphs)
@@ -57,6 +71,21 @@ The protocol abandons linear evaluation in favor of explicit graph generation.
   *   **Nodes:** `fact`, `rule_evaluation`, `conclusion`.
   *   **Edges:** `evaluates_to`, `depends_on`.
 * **Constraint:** The ReasoningGraph IS the evaluation. The final true/false decision is merely a flattened projection of the `conclusion` node. The graph MUST capture the exact context (Tenant, Subject, Release, Timestamp) under which it was generated. Rule-evaluation nodes retain the policy-source pointer supplied by the compiled release, so a historical decision can keep pointing to the 2026 source even after a later release cites a 2027 source.
+
+For position-aware evaluations, the conceptual input is:
+
+```text
+Subject + Governed Institutional Position @ Effective Time + Applicable Policy Release -> ReasoningGraph
+```
+
+This qualifies rather than replaces the epistemic chain:
+
+```text
+Evidence -> EvidenceFactProposal -> accepted decision-bound Claim/Fact snapshot -> RuleGraph -> ReasoningGraph
+```
+
+The governed position is the temporal selection boundary over accepted facts.
+It is not an adjudicator, a hypothetical scenario, or a mutable profile.
 
 * **Subject-view constraint:** A personal position view is a read-only
 projection of this trace. It may make the application of the shared release

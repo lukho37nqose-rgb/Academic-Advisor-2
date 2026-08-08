@@ -95,6 +95,12 @@ owns the evidence; a real operational evaluation flow is still to be built.
 - Policy drafts are compiled before storage, approved by a different identity,
   released immutably, cryptographically signed, and versioned with effective
   dates and applicability selectors.
+- Governed institutional positions can be resolved for one tenant, domain, and
+  subject at an effective time from accepted, confirmed evidence-fact
+  proposals. The resolver can also constrain selection by what was already
+  recorded and reviewed at a historical decision time. Later governed
+  information can change the current position without rewriting earlier
+  decision-bound Claim/Fact snapshots.
 - Tenant, domain, and subject binding is checked in the API. Production
   PostgreSQL uses transaction-scoped tenant context and row-level security.
 - Handbooks are stored as private, hashed sources. Large PDFs are reviewed in
@@ -137,6 +143,9 @@ owns the evidence; a real operational evaluation flow is still to be built.
 - It has no operational administrator interface for authoring every kind of
   policy draft, no completed subject evidence/appeal portal, and no production
   notification service.
+- It does not yet implement a full programme-registration or Faculty
+  Examinations Committee policy capability. Registration-style facts are used
+  in tests as synthetic examples of the temporal substrate only.
 - An accepted evidence fact cannot be overwritten. Corrections use a successor-
   fact relationship that preserves the original evaluation input and records an
   append-only supersession event.
