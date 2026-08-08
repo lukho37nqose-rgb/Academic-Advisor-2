@@ -96,17 +96,21 @@ def _evaluate_leaf(node: ExpressionNode, facts: Dict[str, Fact], graph: Reasonin
             
     # 3. Add Rule Evaluation to Graph
     eval_node_id = f"gn_eval_{node.id}"
+    rule_data = {
+        "expected_condition": node.condition,
+        "expected_value": node.value,
+        "passed": passed,
+        "citation": node.source_citation,
+        "evaluated_under_context": context.model_dump(exclude={"feature_flags"}),
+    }
+    if node.policy_source is not None:
+        rule_data["policy_source"] = node.policy_source.model_dump(mode="json", exclude_none=True)
+
     graph.add_node(GraphNode(
         id=eval_node_id,
         type="rule_evaluation",
         label=node.label,
-        data={
-            "expected_condition": node.condition,
-            "expected_value": node.value,
-            "passed": passed,
-            "citation": node.source_citation,
-            "evaluated_under_context": context.model_dump(exclude={"feature_flags"})
-        },
+        data=rule_data,
         computed_confidence=confidence
     ))
     

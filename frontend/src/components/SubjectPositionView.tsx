@@ -11,7 +11,7 @@ import {
   UserCircle,
   XCircle,
 } from 'lucide-react';
-import type { GraphNode, ReasoningGraph } from '../api/client';
+import type { GraphNode, PolicySourceReference, ReasoningGraph } from '../api/client';
 import { SubjectDecisionReview } from './SubjectDecisionReview';
 
 type PositionState = 'satisfied' | 'not_satisfied' | 'human_review' | 'indeterminate';
@@ -59,6 +59,32 @@ function displayValue(value: unknown): string {
   if (value === null || value === undefined || value === '') return 'Not recorded';
   if (typeof value === 'string' || typeof value === 'number') return String(value);
   return 'Recorded value available';
+}
+
+function policySourceReference(value: unknown): PolicySourceReference | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as PolicySourceReference;
+}
+
+function formatPageRange(source: PolicySourceReference) {
+  if (!source.page_start) return null;
+  if (source.page_end && source.page_end !== source.page_start) return `pp. ${source.page_start}-${source.page_end}`;
+  return `p. ${source.page_start}`;
+}
+
+function policySourceLabel(source: PolicySourceReference | null, fallbackCitation: string) {
+  if (!source) return fallbackCitation;
+  const title = source.display_title || source.source_title || fallbackCitation;
+  const version = source.source_version && !title.includes(source.source_version) ? source.source_version : null;
+  const location = [formatPageRange(source), source.section].filter(Boolean).join(' · ');
+  return [title, version, location].filter(Boolean).join(' · ');
+}
+
+function safeSourceHref(source: PolicySourceReference | null) {
+  const anchor = source?.source_anchor?.trim();
+  if (!anchor) return null;
+  if (anchor.startsWith('#') || anchor.startsWith('?') || anchor.startsWith('/')) return anchor;
+  return null;
 }
 
 function sourceAuthorityLabel(value: unknown) {
@@ -182,6 +208,9 @@ function PolicyCondition({ condition, fact }: { condition: GraphNode; fact?: Gra
   const factData = nodeData(fact);
   const status = requirementStatus(conditionData.passed);
   const citation = typeof conditionData.citation === 'string' ? conditionData.citation : '';
+  const policySource = policySourceReference(conditionData.policy_source);
+  const sourceLabel = policySourceLabel(policySource, citation);
+  const sourceHref = safeSourceHref(policySource);
   const informationHref = subjectInformationHref(fact);
 
   return (
@@ -191,7 +220,22 @@ function PolicyCondition({ condition, fact }: { condition: GraphNode; fact?: Gra
           <h4 className="font-semibold">{cleanLabel(condition.label)}</h4>
           <span className={`border px-2 py-0.5 text-xs font-semibold ${status.className}`}>{status.label}</span>
         </div>
-        {citation && <p className="mt-2 text-sm leading-relaxed text-muted">Policy source: {citation}</p>}
+        {sourceLabel && (
+          <div className="mt-2 text-sm leading-relaxed text-muted">
+            <p>Source: {sourceLabel}</p>
+            <div className="mt-1 flex flex-wrap gap-3 text-xs font-semibold">
+              {sourceHref
+                ? <a href={sourceHref} className="underline underline-offset-4">See source</a>
+                : <span>Exact source location recorded</span>}
+              {policySource?.excerpt_reference && (
+                <details className="inline-block">
+                  <summary className="cursor-pointer underline underline-offset-4">See exact wording</summary>
+                  <p className="mt-1 max-w-sm font-normal text-muted">{policySource.excerpt_reference}</p>
+                </details>
+              )}
+            </div>
+          </div>
+        )}
       </div>
       <div>
         <p className="text-xs font-semibold uppercase tracking-normal text-muted">Student information</p>
@@ -204,6 +248,27 @@ function PolicyCondition({ condition, fact }: { condition: GraphNode; fact?: Gra
         <p className="mt-1 text-sm">{expectedValueLabel(condition)}</p>
       </div>
     </article>
+  );
+}
+
+function policySourceKey(source: PolicySourceReference | null, citation: string) {
+  return JSON.stringify({ source, citation });
+}
+
+function PolicySourceItem({ source, citation }: { source: PolicySourceReference | null; citation: string }) {
+  const sourceLabel = policySourceLabel(source, citation);
+  const sourceHref = safeSourceHref(source);
+  if (!sourceLabel) return null;
+  return (
+    <li id={source?.source_anchor?.startsWith('#') ? source.source_anchor.slice(1) : undefined} className="border-l-2 border-border pl-3">
+      <p>{sourceLabel}</p>
+      <div className="mt-1 flex flex-wrap gap-3 text-xs font-semibold text-primary">
+        {sourceHref
+          ? <a href={sourceHref} className="underline underline-offset-4">See source</a>
+          : <span className="text-muted">Precise source pointer retained in this trace</span>}
+        {source?.rule_identifier && <span className="text-muted">Rule {source.rule_identifier}</span>}
+      </div>
+    </li>
   );
 }
 
@@ -274,6 +339,14 @@ export function SubjectPositionView({ graph }: { graph: ReasoningGraph }) {
   const presentation = positionPresentation(conclusion);
   const StatusIcon = presentation.icon;
   const recordNote = recordPositionNote(graph);
+  const policySources = conditionRows
+    .map(({ condition }) => {
+      const data = nodeData(condition);
+      const citation = typeof data.citation === 'string' ? data.citation : '';
+      return { source: policySourceReference(data.policy_source), citation };
+    })
+    .filter(({ source, citation }) => source || citation)
+    .filter((entry, index, entries) => entries.findIndex((candidate) => policySourceKey(candidate.source, candidate.citation) === policySourceKey(entry.source, entry.citation)) === index);
 
   return (
     <div className="mx-auto w-full max-w-5xl py-8">
@@ -345,11 +418,9 @@ export function SubjectPositionView({ graph }: { graph: ReasoningGraph }) {
           <div><dt className="font-medium">Trace reference</dt><dd className="mt-1 font-mono text-xs text-muted">{graph.id}</dd></div>
         </dl>
         <ul className="mt-5 grid gap-2 text-sm">
-          {conditionRows
-            .map(({ condition }) => nodeData(condition).citation)
-            .filter((citation): citation is string => typeof citation === 'string' && citation.length > 0)
-            .filter((citation, index, citations) => citations.indexOf(citation) === index)
-            .map((citation) => <li key={citation} className="border-l-2 border-border pl-3">{citation}</li>)}
+          {policySources.map(({ source, citation }) => (
+            <PolicySourceItem key={policySourceKey(source, citation)} source={source} citation={citation} />
+          ))}
         </ul>
       </section>
 

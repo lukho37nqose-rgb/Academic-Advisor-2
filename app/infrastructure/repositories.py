@@ -2510,6 +2510,28 @@ class PublicAccessRepository:
         "includes": "contains",
     }
 
+    @staticmethod
+    def _policy_source(node: dict[str, Any]) -> dict[str, Any] | None:
+        raw = node.get("policy_source") or node.get("policy_source_reference")
+        if not isinstance(raw, dict):
+            return None
+        safe_fields = {
+            "source_id",
+            "source_version",
+            "source_title",
+            "page_start",
+            "page_end",
+            "section",
+            "rule_identifier",
+            "effective_from",
+            "effective_until",
+            "display_title",
+            "source_anchor",
+            "excerpt_reference",
+        }
+        reference = {key: raw[key] for key in sorted(safe_fields) if raw.get(key) is not None}
+        return reference or None
+
     def __init__(self, session: AsyncSession):
         self.session = session
 
@@ -2575,7 +2597,7 @@ class PublicAccessRepository:
                 "children": [self._guide_node(child, fact_labels) for child in children if isinstance(child, dict)],
             }
         target = str(node.get("target", ""))
-        return {
+        guide_node = {
             "kind": "rule",
             "label": node.get("label", "Policy condition"),
             "fact_label": fact_labels.get(target, "Required information"),
@@ -2583,6 +2605,10 @@ class PublicAccessRepository:
             "expected_value": node.get("value"),
             "citation": node.get("source_citation"),
         }
+        source = self._policy_source(node)
+        if source is not None:
+            guide_node["policy_source"] = source
+        return guide_node
 
     async def _approved_release(self, domain_id: str, version: Optional[str] = None) -> tuple[DBDomain, DBRelease, DBRuleGraph]:
         domain = await self.session.get(DBDomain, domain_id)
@@ -3282,6 +3308,8 @@ class DraftRepository:
             if isinstance(value, dict)
         }
 
+    _policy_source = staticmethod(PublicAccessRepository._policy_source)
+
     @classmethod
     def _review_node(cls, node: dict[str, Any], fact_labels: dict[str, str]) -> dict[str, Any]:
         operator = node.get("operator")
@@ -3295,7 +3323,7 @@ class DraftRepository:
                 "children": [cls._review_node(child, fact_labels) for child in children if isinstance(child, dict)],
             }
         target = str(node.get("target", ""))
-        return {
+        review_node = {
             "kind": "rule",
             "label": node.get("label", "Policy condition"),
             "fact_label": fact_labels.get(target, "Required information"),
@@ -3303,6 +3331,10 @@ class DraftRepository:
             "expected_value": node.get("value"),
             "citation": node.get("source_citation"),
         }
+        source = cls._policy_source(node)
+        if source is not None:
+            review_node["policy_source"] = source
+        return review_node
 
     async def list_pending_reviews(
         self,

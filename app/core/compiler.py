@@ -10,7 +10,7 @@ import hashlib
 import datetime
 from typing import Dict, Any, Set
 
-from .models import ExpressionNode, RuleGraph
+from .models import ExpressionNode, PolicySourceReference, RuleGraph
 from .operators import SUPPORTED_BRANCH_OPERATORS, SUPPORTED_LEAF_OPERATORS, UnsupportedOperatorError
 
 def _stable_node_id(node_path: tuple[int, ...]) -> str:
@@ -36,6 +36,12 @@ def build_expression_tree(
     seen_node_ids.add(node_id)
     label = raw_node.get("label", "Unnamed Rule")
     source_citation = raw_node.get("source_citation")
+    raw_policy_source = raw_node.get("policy_source") or raw_node.get("policy_source_reference")
+    policy_source = (
+        PolicySourceReference.model_validate(raw_policy_source)
+        if isinstance(raw_policy_source, dict)
+        else None
+    )
     
     # Check if it's a branch node (has operator)
     if "operator" in raw_node:
@@ -59,7 +65,8 @@ def build_expression_tree(
             operator=operator,
             children=children,
             label=label,
-            source_citation=source_citation
+            source_citation=source_citation,
+            policy_source=policy_source,
         )
         
     # Otherwise, it must be a leaf node
@@ -78,7 +85,8 @@ def build_expression_tree(
         condition=raw_node["condition"],
         value=raw_node["value"],
         label=label,
-        source_citation=source_citation
+        source_citation=source_citation,
+        policy_source=policy_source,
     )
 
 def compile_release_to_graph(release_id: str, raw_rules_payload: Dict[str, Any]) -> RuleGraph:

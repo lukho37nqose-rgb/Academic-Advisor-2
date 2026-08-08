@@ -7,7 +7,7 @@ structures (ExpressionNode, RuleGraph, ReasoningGraph).
 """
 
 from typing import List, Dict, Any, Optional, Union, Literal
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 import uuid
 import datetime
 
@@ -60,6 +60,45 @@ class Fact(BaseModel):
 
 # --- Logical Architecture Models ---
 
+class PolicySourceReference(BaseModel):
+    """Stable presentation pointer to the authority behind a policy rule."""
+
+    source_id: Optional[str] = None
+    source_version: Optional[str] = None
+    source_title: Optional[str] = None
+    document_hash: Optional[str] = None
+    page_start: Optional[int] = Field(default=None, ge=1)
+    page_end: Optional[int] = Field(default=None, ge=1)
+    section: Optional[str] = None
+    rule_identifier: Optional[str] = None
+    effective_from: Optional[datetime.date] = None
+    effective_until: Optional[datetime.date] = None
+    display_title: Optional[str] = None
+    source_anchor: Optional[str] = None
+    excerpt_reference: Optional[str] = None
+
+    @field_validator(
+        "source_id",
+        "source_version",
+        "source_title",
+        "document_hash",
+        "section",
+        "rule_identifier",
+        "display_title",
+        "source_anchor",
+        "excerpt_reference",
+    )
+    @classmethod
+    def trim_optional_text(cls, value: Optional[str]) -> Optional[str]:
+        trimmed = value.strip() if isinstance(value, str) else value
+        return trimmed or None
+
+    @model_validator(mode="after")
+    def validate_page_range(self) -> "PolicySourceReference":
+        if self.page_start and self.page_end and self.page_end < self.page_start:
+            raise ValueError("Policy source page_end cannot be before page_start.")
+        return self
+
 class ExpressionNode(BaseModel):
     id: str
     # Branches have an operator
@@ -72,6 +111,7 @@ class ExpressionNode(BaseModel):
     
     label: str
     source_citation: Optional[str] = None
+    policy_source: Optional[PolicySourceReference] = None
 
 class RuleGraph(BaseModel):
     id: str = Field(default_factory=lambda: "rg_" + uuid.uuid4().hex)

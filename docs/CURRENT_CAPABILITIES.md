@@ -53,8 +53,11 @@ People governed by a decision can view an approved public policy guide, open a
 human-assistance request where enabled, and request a review of their own
 decision trace. Their trace view presents the current policy position, the
 conditions and facts that produced it, the policy release used, whether human
-consideration is required, and the available review route. Those workflows do
-not change the original evidence, facts, or policy release.
+consideration is required, and the available review route. Where a release
+contains structured policy-source pointers, the subject view explains the
+condition first and then points to the authoritative source title, version,
+page range, section, and safe source anchor retained with the historical trace.
+Those workflows do not change the original evidence, facts, or policy release.
 
 ## What each account can see
 
@@ -103,7 +106,10 @@ owns the evidence; a real operational evaluation flow is still to be built.
   append-only event history, and requires an independent reviewer before it is
   approved.
 - Releases bind their cited rule-source manifest into the signed release
-  payload. A production evaluation fails closed if release metadata, policy,
+  payload. Rules may also carry structured policy-source pointers with stable
+  source identifiers, versions, document hashes, page ranges, sections, rule
+  identifiers, and safe anchors where the governed source artifact supports
+  them. A production evaluation fails closed if release metadata, policy,
   source manifest, compiled graph, or signature no longer agree.
 - Outcome-calibration suites are tenant and domain scoped, immutable after
   submission, independently certified, and recorded as a single immutable
